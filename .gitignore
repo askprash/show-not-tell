@@ -1,0 +1,8 @@
+node_modules/
+.backlog/
+backlog/
+.pi/
+.walkthrough/
+artifacts/
+*.tgz
+.DS_Store

@@ -1,0 +1,23 @@
+{
+  "name": "pi-walkthrough",
+  "version": "0.1.0",
+  "description": "pi package: an evidence-carrying HTML walkthrough of the latest feature, built only from recorded commands",
+  "license": "MIT",
+  "type": "module",
+  "keywords": ["pi-package", "pi", "walkthrough", "evidence"],
+  "files": ["extensions/", "skills/", "README.md"],
+  "pi": {
+    "extensions": ["./extensions/walkthrough.ts"],
+    "skills": ["./skills"]
+  },
+  "peerDependencies": {
+    "@earendil-works/pi-ai": "*",
+    "@earendil-works/pi-coding-agent": "*"
+  },
+  "scripts": {
+    "test": "node --test test/smoke.test.mjs"
+  },
+  "engines": {
+    "node": ">=22.18"
+  }
+}
