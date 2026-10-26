@@ -1,11 +1,11 @@
 {
   "name": "pi-walkthrough",
   "version": "0.1.0",
-  "description": "pi package: an evidence-carrying HTML walkthrough of the latest feature, built only from recorded commands",
+  "description": "Readable, source-linked code walkthroughs with verification and explanation modes", 
   "license": "MIT",
   "type": "module",
   "keywords": ["pi-package", "pi", "walkthrough", "evidence"],
-  "files": ["extensions/", "skills/", "README.md"],
+  "files": ["extensions/", "skills/", "docs/", "README.md"],
   "pi": {
     "extensions": ["./extensions/walkthrough.ts"],
     "skills": ["./skills"]
@@ -15,7 +15,7 @@
     "@earendil-works/pi-coding-agent": "*"
   },
   "scripts": {
-    "test": "node --test test/smoke.test.mjs"
+    "test": "node --test test/*.test.mjs"
   },
   "engines": {
     "node": ">=22.18"

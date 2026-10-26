@@ -1,90 +1,68 @@
 ---
 name: walkthrough
-description: Write an evidence-carrying HTML walkthrough of the latest feature in a repository (the last commit or a named diff) in under five minutes. Every command the agent runs goes through the walkthrough_record tool, which records the command and its real output, and walkthrough_write renders the page in seven fixed sections (claim, map, evidence, checks changed, could it be wrong, not verified, what the result depends on) with figures from recorded runs. Trigger on "walkthrough", "/walkthrough", "show your work", or "walk me through the last commit / this feature". Report-only. It does not fix or change code.
+description: Explain a code change or show the work behind it in a readable, source-linked HTML page. Use for walkthrough, show your work, explain this code, or walk me through a commit. Verification mode runs relevant checks; explanation mode teaches code and reasoning. Both retain exact recorded sources and identify Git commits.
 ---
 
-# Walkthrough of the latest feature, with recorded evidence
+# Walk through the work for a reader who was not there
 
-A reader who was not here should see what ran, what changed, and where to check, within a few minutes.
+The reader should understand what changed, how it works, what you checked, and what remains uncertain without reading a shell command. The command log supports the explanation; it is not the explanation.
 
-## Scope
+## Choose the mode
 
-- Cover the latest feature only. That means the last commit, or the commit or diff the user names, and never the whole repository.
-- Report only. Do not fix, refactor, commit, stash, check out or delete anything. The tool compares `git status` before and after, and the page lists any file that changed.
-- Do not run commands that write into the repository, such as site builds into `dist/`, formatters, code generators or installs. Runs that write into the project's own ignored output folder (for example `runs/`) or into `.walkthrough/figs/` are fine.
+- **Verification** is the default. `/walkthrough --mode=verification <scope>` demonstrates behavior with relevant examples and checks.
+- **Explanation** uses `/walkthrough --mode=explanation <scope>`. Teach the code, algorithm, architecture, or scientific reasoning. Record the source you inspect. Do not treat code inspection as a passing runtime check.
 
-## Tools
+Follow the reader's question. Neither mode requires a fixed section count, a plot, a diagram, or a parent-version test.
 
-During a walkthrough you have two tools and nothing else.
+## Stay within scope
 
-- `walkthrough_record({command, why, timeout_s?, at_ref?, overlay?, produces?})` runs one bash command in the project and records it as `r1`, `r2`, .... Use it for everything, including reading code (`git show`, `sed -n`, `grep -n`). The log on the page lists every record, so a reader sees all you did.
-- `walkthrough_write({...})` renders the page to `.walkthrough/<slug>.html`. It rejects unknown record ids, quotes that are not in the cited record, and figures whose record produced no file.
+Cover the named commit, range, or code question. Record the scope and relevant diff early. Resolve exact commits rather than describing a moving `HEAD` as a permanent identity. Say whether uncommitted content is included.
 
-## Budget
+Report only. Do not fix, refactor, commit, install dependencies, or change project files. Commands can write into `.walkthrough/figs/` or the project's own ignored output directory. Use an explicit output option when a program would otherwise overwrite committed data.
 
-- 20 recorded commands, 60 s each by default (`timeout_s` up to 120), 5 minutes in total from the first record. The tool refuses calls past the budget and lists them under "Not verified".
-- Reading costs records too. Combine reads into one command (`git show --stat X && sed -n 10,40p a.py && grep -n cp b.py`).
-- Run each test command once. Shape it so one output shows the totals and the names of any failing tests (the tool keeps the first and last 4 KB of each stream). Do not re-run a command only to filter its output.
+During the walkthrough, use only:
 
-## Command plan (in this order)
+- `walkthrough_record({command, why, timeout_s?, at_ref?, overlay?, produces?})` for commands, including reading code. `why` is a short, plain-language action such as “Run the cruise-thrust sweep and generate two plots.” It appears as the record heading, so do not put a hash or a shell command in place of the action.
+- `walkthrough_write({...})` to create the page from recorded sources. It accepts the report fields in one call or several calls. No need to fill a seven-part form.
 
-1. The scope, recorded with `git show --stat --numstat --format='%h %s%n%b' <sha>` (or `git diff --stat --numstat <range>`). The page draws its Map figure from this output.
-2. The core change. Use `git show <sha> -- <files>` for the files the claim rests on, plus `sed -n` or `grep -n` for context, in as few records as you can. Hunk headers (`@@ -a,b +c,d @@`) give the Map's line numbers.
-3. **Example run with a plot (required when the feature produces numbers).** Run the feature once on a small real input and plot its numeric output in the same command. See "Figures". This plot is the first thing the reader sees.
-4. Find the tests that touch the changed files (`grep -rln <name> <test dirs>`), then run only those tests. Check which environment variables they read (`env | grep -i <name>`). A test of the real program is often skipped unless one is set. Never search the whole filesystem (`find /`), since that uses up the time budget.
-5. **Red/green (required when the commit added or changed a test).** Run the same test command with `at_ref: "<sha>~1"` and `overlay: ["<new or changed test file>"]`, so the new test runs against the old code. A failure there, with a pass at the commit, shows the test checks the change. If the parent cannot run the test for an unrelated reason (missing environment, import error), say so under "Not verified" and do not call it red.
-6. If budget is left, run the check from "Could it be wrong?", or record the diff of a second file the claim depends on.
+The default budget is 20 commands and 5 minutes, with 60 seconds per command (120 maximum). Spend it on the reader's question. Do not rerun a test just to filter its output. Keep failure names and totals in the recorded output. The tool retains the beginning and end of long streams and marks truncation.
 
-If the named commit is not HEAD, run its checks with `at_ref: "<sha>"`. Otherwise say under "Not verified" that they ran on HEAD.
+## Build an explanation, not a transcript
 
-Commands start in the project directory, so use relative paths. The `at_ref` worktree is a fresh checkout. The tool links the main checkout's `.venv`, `venv` and `node_modules` into it. Other untracked files (built binaries, data, `.env`) are missing.
+1. Inspect the scope and core code. Read only what is needed to understand the change.
+2. Explain the bottom line in a short paragraph. Give unfamiliar terms a short definition when needed.
+3. Choose a few sections with descriptive headings. Follow the code's data flow, the scientific argument, or the result the reader cares about. Tie each observation to its recorded source.
+4. In verification mode, run checks that address the claim. A parent-version run with an overlaid new test is useful when showing a regression fix. Do not require it for coverage of behavior that was already correct. An environment failure is blocked verification, not evidence that the old code is wrong.
+5. State material limits next to the result or under Limits. Separate measurements made here from values read from committed files. State what a test asserts, not just that it passed.
 
-## Figures
+Write full sentences for explanations. Short fragments are fine for labels and table cells. Prefer precise verbs to confidence slogans. Remove repeated detail rather than compressing an explanation into unexplained jargon. Do not add generic homework, a citation-count score, or a global confidence badge.
 
-Make two figures when the tool produces numbers, both from one recorded run.
+## Use visuals when they explain something
 
-- **Figure 1, the tool's main output.** Plot what the tool is for across its main input, even when the commit changes something else. For an aerofoil polar tool that is lift coefficient against angle of attack from one viscous run (for example NACA 2412, Re = 1e6, alpha from -4 to 12 deg). Pass it first in `figures`, so it appears under the Claim.
-- **Figure 2, the commit's own output.** If the commit adds an output (such as per-angle Cp files), plot it from the same run and put it in Evidence.
-- Use the tool's command-line entry point, not its internal functions. Read the script's usage line first (`sed -n 1,20p <script>`), write the input file with a heredoc under `.walkthrough/figs/`, run the script, and plot from its result file, all in one record. Set `produces` to the plot path. When one command writes both plots, list both in `produces`, separated by a comma, and name each with `file` in `figures`. Never copy or re-touch a plot to record it again.
-- Plot numbers from a run you record in this walkthrough. Do not plot a fixture or any other file committed to the repository, since that shows stored data and not the tool running.
-- Plot with matplotlib. Before the plot, check for it with one recorded command (`uv run --offline --no-project --with matplotlib python -c "import matplotlib"`, or the project's `.venv/bin/python -c "import matplotlib"`), then plot with whichever worked.
-- Every plot has axis labels with quantities and units, ticks on both axes, a light grid, a title naming the case (for example "NACA 2412, Re = 1e6, viscous"), and a marker on each computed point. Save PNG at dpi 120 or more.
-- Fall back to a plain-Python SVG only when both matplotlib checks fail, and say so under "Not verified". The SVG still needs axis labels with units, at least five ticks per axis, and a marker per point.
-- Write captions that stand alone, with the inputs and the record id.
-- Pass `figures: []` only when the tool produces no numbers. Say why under "Not verified".
+A plot can explain numerical behavior. A flowchart can explain an algorithm, code path, dependency, or chain of reasoning. Use neither as decoration. A compact table may be better than another plot. Do not add a file-churn chart just because a diffstat is available.
 
-## The seven sections (fixed order; walkthrough_write renders them)
+For diagrams, use the svg-figs skill if it is available. Run its environment check, generate the SVG with its library, run the lint, and inspect the PNG. Otherwise use an available diagram generator; do not invent measurements. Keep a script beside its diagram under `.walkthrough/figs/` so it can be reproduced. The npm package does not depend on a machine-local skill installation.
 
-1. **Claim.** What the feature does, in two sentences, and how sure you are. Start `confidence` with high, medium or low, then the reason.
-2. **Map.** Files and line ranges touched, each with a one-line note and the record that showed the lines. The tool adds a bar chart of lines added and deleted per file.
-3. **Evidence.** Each claim paired with a record id and what to look for in its output. Add a short exact `quote` for the key line. Red/green goes here.
-4. **Checks changed.** Every test, tolerance or check added, changed, skipped or deleted in the scope, read from the diff. Pass an empty array when there are none.
-5. **Could it be wrong?** Other explanations for the result, and the run that would show the claim wrong. Give a `record_id` only if that record is the run you describe.
-6. **Not verified.** What you did not run or could not check. Name parts without a test, environments not tried, and inputs outside what was run.
-7. **What the result depends on** (`depends_on`). The one or two items the conclusion rests on, and exactly what the reader should run or open to check each.
+Record the command that writes each SVG or PNG and pass the path in `produces`. Only figures captured by a record can be embedded. Existing, recorded source data may be used for an explanatory visual, but label it as stored data; do not present it as a fresh experiment. In verification mode, favor a figure from the demonstrated run.
 
-## Grounding rules
+Give plots meaningful quantity names and units. A caption says what the reader should notice, then the essential conditions. Put lengthy setup details in an adjacent section rather than repeating them in every caption. Keep commands and hashes out of captions.
 
-- Every snippet, number and output on the page comes from a record. Cite its id. Never type an output, a line count or a test count from memory.
-- Copy each `quote` exactly from the record's output, and keep it to a few lines. The tool drops a quote it cannot find.
-- Take Map line numbers from hunk headers or `sed -n` output in a cited record. A diffstat has no line numbers. If no record shows the lines, write "see diff in rN".
-- A passing test is evidence only for what it asserts. Say what the test checks.
-- A tolerance or threshold is bookkeeping. Report both values with units and the difference.
-- If the tree has uncommitted changes, say whether the walkthrough covers them.
-- Keep what ran apart from what you infer. Inference belongs in the Claim's confidence reason or under "Not verified".
+Diagrams can have clickable regions. In the visual's `links`, supply a label, `target` of `section:<id>` or `record:<id>`, and `x`, `y`, `width`, `height` as percentages of the entire image bounds. The tool validates targets and geometry. Links are HTML overlays on a non-active image, so the SVG cannot inject page code. Link the diagram to the sections that explain its nodes; the renderer also supplies text links for keyboard access.
 
-## Writing rules
+## Write the page
 
-- Plain, direct sentences. Short bullets. One idea per line. No metaphors.
-- Do not join two statements with a colon. Write two sentences.
-- Avoid the pattern "X is this, but Y is not". State each fact in its own sentence.
-- Use the correct technical term and define it in a few words on first use, for a competent reader from another field.
-- Every number has units and a record id.
-- Banned words: honest, honestly, clearly, obviously, definitive, decisive, conclusive, basically, truly, genuinely, essentially, literally, certainly, of course, indeed, notably, robust, powerful, seamless, leverage, utilize, facilitate, comprehensive, thorough, crucial, vital, key (as in "key insight"), highlight, showcase, significantly, substantially, meticulous, rigorous, nuanced, pivotal, delve, unlock, gate, tier, hinge, smoking gun, north star, long pole, fan out, sanity check, happy path, under the hood, out of the box.
-- No filler or hedges ("it is worth noting", "in order to", "potentially", "arguably", "perhaps", "it seems").
-- No references to this conversation ("as requested", "as mentioned above").
+Read `../../docs/report-format.md` relative to this skill directory when you need field details. The write payload is:
 
-## Finish
+- `title`: a descriptive title, not a hash range.
+- `mode`: `verification` or `explanation`.
+- `scope`: `{label, head, base?, include_working_tree?, record_id?}`. Use a short human label. `head` and optional `base` are Git refs the tool resolves. Omit `base` for a single commit.
+- `summary`: a brief bottom line.
+- `sections`: ordered `{id, title, text, evidence?}` entries. Use lowercase hyphenated IDs. An evidence entry is `{record_id, summary, quote?}`. A quote must appear in that record's output.
+- `checks`: optional `{label, status, summary, record_ids?}` entries. Status is `passed`, `failed`, `blocked`, `not-run`, or `inspected`. A check that ran or was inspected cites its records.
+- `limits`: optional `{text, record_id?}` entries. State important uncertainty once, without repeating it across several categories.
+- `changes`: optional `{path, note, lines?, record_id?}` entries. Use one actual repository-relative path per entry, not a glob or a list packed into a string. Include changed tests and tolerances when material to the result.
+- `visuals`: optional `{record_id, file?, kind, caption, alt?, section_id?, links?}` entries. `kind` is `plot` or `diagram`. Placement defaults to `overview`; otherwise name a section ID. The renderer respects the requested placement.
 
-1. Call `walkthrough_write` with all seven sections and the figures. A large payload can go in two calls (for example title, scope, claim, map and evidence first, then the rest). If it rejects a section, resend only that section.
-2. Reply in two lines. Give the page path on the first, and on the second the one or two things the result depends on.
+Empty optional arrays are fine. The reader can expand the changed files, scope commits, and complete exact command log. Do not repeat commands in article prose. Never invent output, numbers, units, source lines, or facts. Keep observations separate from explanations of their cause.
+
+Finish with the page path and the principal result or limitation. Do not narrate the tool protocol back to the reader.
