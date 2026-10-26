@@ -675,7 +675,7 @@ export default function walkthrough(pi: ExtensionAPI) {
 				if (!ID.test(section.id) || RESERVED_IDS.has(section.id) || log.some((r) => r.id === section.id) || /^r[0-9]+$/.test(section.id) || ids.has(section.id)) problems.push(`sections: invalid or colliding id "${section.id}"`);
 				ids.add(section.id);
 			}
-			const sectionIds = new Set(["overview", "checks", "limits", "changes", "scope", ...ids]);
+			const sectionIds = new Set(["overview", ...ids]);
 			const check = (where: string, id: string | undefined, records = valid) => {
 				if (id !== undefined && (!ID.test(id) || !records.has(id))) problems.push(`${where}: unknown record_id "${id}"`);
 			};

@@ -47,7 +47,7 @@ Record the command that writes each SVG or PNG and pass the path in `produces`. 
 
 Give plots meaningful quantity names and units. A caption says what the reader should notice, then the essential conditions. Put lengthy setup details in an adjacent section rather than repeating them in every caption. Keep commands and hashes out of captions.
 
-Diagrams can have clickable regions. In the visual's `links`, supply a label, `target` of `section:<id>` or `record:<id>`, and `x`, `y`, `width`, `height` as percentages of the entire image bounds. The tool validates targets and geometry. Links are HTML overlays on a non-active image, so the SVG cannot inject page code. Link the diagram to the sections that explain its nodes; the renderer also supplies text links for keyboard access.
+Diagrams can have clickable regions. In the visual's `links`, supply a label, `target` of `section:<id>` or `record:<id>`, and `x`, `y`, `width`, `height` as percentages of the entire image bounds. Section targets are `overview` or authored section IDs, not generated sections such as `checks` or `scope`. The tool validates targets and geometry. Links are HTML overlays on a non-active image, so the SVG cannot inject page code. Link the diagram to the sections that explain its nodes; the renderer also supplies text links for keyboard access.
 
 ## Write the page
 
@@ -58,7 +58,7 @@ Read `../../docs/report-format.md` relative to this skill directory when you nee
 - `scope`: `{label, head, base?, include_working_tree?, record_id?}`. Use a short human label. `head` and optional `base` are Git refs the tool resolves. Omit `base` for a single commit.
 - `summary`: a brief bottom line.
 - `sections`: ordered `{id, title, text, evidence?}` entries. Use lowercase hyphenated IDs. An evidence entry is `{record_id, summary, quote?}`. A quote must appear in that record's output.
-- `checks`: optional `{label, status, summary, record_ids?}` entries. Status is `passed`, `failed`, `blocked`, `not-run`, or `inspected`. A check that ran or was inspected cites its records.
+- `checks`: optional `{label, status, summary, record_ids?}` entries. Status is `passed`, `failed`, `blocked`, `not-run`, or `inspected`. Every status except `not-run`, including `blocked`, requires at least one executed or inspected record. Cite refused commands in limits or diagram navigation, not as check or article evidence.
 - `limits`: optional `{text, record_id?}` entries. State important uncertainty once, without repeating it across several categories.
 - `changes`: optional `{path, note, lines?, record_id?}` entries. Use one actual repository-relative path per entry, not a glob or a list packed into a string. Include changed tests and tolerances when material to the result.
 - `visuals`: optional `{record_id, file?, kind, caption, alt?, section_id?, links?}` entries. `kind` is `plot` or `diagram`. Placement defaults to `overview`; otherwise name a section ID. The renderer respects the requested placement.

@@ -109,6 +109,11 @@ test("write accumulates the new article, rejects ids and drops non-verbatim quot
 	assert.equal(rendered().log.find((r) => r.id === "r1").stdout, "hi\n1\n");
 	const res = await write(payload("r1", "hi"));
 	assert.ok(existsSync(res.details.path));
+	const html = readFileSync(res.details.path, "utf8");
+	assert.match(html, /<section id="behavior"><h2>Behavior<\/h2>/);
+	assert.match(html, /<details class="record" id="r1"><summary>basic /);
+	assert.equal(html.split("echo hi &amp;&amp; echo $WALKTHROUGH").length - 1, 1, "real renderer retains the exact command once");
+	assert.match(html, /<section id="limits"><h2>Material limits<\/h2>/);
 	const result = rendered();
 	for (const key of ["checks", "limits", "changes", "visuals"]) assert.deepEqual(result.payload[key], []);
 	assert.ok(result.extras.autoLimits.some((l) => /timed out/.test(l.text)));
@@ -183,7 +188,15 @@ test("visual preparation validates capture hashes, section placement, links and 
 		const visual = { record_id: "r1", kind: "diagram", caption: "A square", section_id: "behavior", links: [{ label: "Read", target: "section:behavior", x: 1, y: 2, width: 30, height: 40 }] };
 		for (const patch of [{ record_id: "r3" }, { file: "other.png" }, { section_id: "missing" }, { links: [{ ...visual.links[0], target: "javascript:alert(1)" }] }, { links: [{ ...visual.links[0], target: "record:r999" }] }, { links: [{ ...visual.links[0], width: 101 }] }, { links: [{ ...visual.links[0], x: -1 }] }, { links: [{ ...visual.links[0], height: 0 }] }, { links: [{ ...visual.links[0], y: NaN }] }])
 			await assert.rejects(write({ ...payload("r1"), visuals: [{ ...visual, ...patch }] }), /did not produce|unknown|geometry|expected number/);
-		await write({ ...payload("r1"), visuals: [visual, { record_id: "r2", file: "b.svg", kind: "plot", caption: "Second" }] });
+		for (const id of ["checks", "limits", "changes", "scope", "log", "technical"]) {
+			await assert.rejects(write({ ...payload("r1"), visuals: [{ ...visual, section_id: id }] }), /unknown section_id/);
+			await assert.rejects(write({ ...payload("r1"), visuals: [{ ...visual, links: [{ ...visual.links[0], target: `section:${id}` }] }] }), /unknown link target/);
+		}
+		const page = await write({ ...payload("r1"), visuals: [visual, { record_id: "r2", file: "b.svg", kind: "plot", caption: "Second" }] });
+		const html = readFileSync(page.details.path, "utf8");
+		assert.match(html, /<img src="data:image\/svg\+xml;base64,/);
+		assert.match(html, /href="#behavior" aria-label="Read" style="left:1%;top:2%;width:30%;height:40%"/);
+		assert.match(html, /aria-label="Diagram destinations"/);
 		assert.equal(rendered().extras.visuals[0].section_id, "behavior", "first visual stays in its chosen section");
 		assert.equal(rendered().extras.visuals[1].section_id, "overview");
 		assert.match(rendered().extras.visuals[0].src, /^data:image\/svg\+xml;base64,/);
