@@ -156,10 +156,20 @@ export function renderPage(payload: WritePayload, log: EvidenceRecord[], meta: P
     for (const item of items) groups.set(item.record_id, [...(groups.get(item.record_id) ?? []), item]);
     return [...groups].map(([id, items]) => `<div class="evidence">${items.map((item) => `${paragraphs(item.summary)}${item.quote ? `<blockquote><pre><code>${esc(item.quote)}</code></pre></blockquote>` : ""}`).join("")}<p>${cite(id)}</p></div>`).join("");
   };
-  const limits = [...payload.limits, ...extras.autoLimits];
+  const tree = extras.tree;
+  const treeWarning = tree && (!tree.checked || tree.changed.length) ? [
+    !tree.checked ? "Working-tree comparison could not be completed; repository changes may be undetected." : "",
+    tree.changed.length ? `Files changed during the walkthrough: ${tree.changed.join(", ")}.` : "",
+  ].filter(Boolean).join(" ") : "";
+  const snapshotCitations = treeWarning ? [
+    tree?.before_id ? cite(tree.before_id, "Before snapshot") : "",
+    tree?.after_id ? cite(tree.after_id, "After snapshot") : "",
+  ].filter(Boolean).join(" · ") : "";
+  const limits = [...payload.limits, ...extras.autoLimits].filter((l) => !treeWarning || l.text !== treeWarning);
   if (extras.scope.warning && !limits.some((l) => l.text === extras.scope.warning)) limits.push({ text: extras.scope.warning });
   // Runtime supplies automatic limits; preserve visibility even for an incomplete caller.
   for (const record of log.filter(issue)) {
+    if (treeWarning && (record.id === tree?.before_id || record.id === tree?.after_id)) continue;
     if (!limits.some((l) => l.record_id === record.id) && !payload.checks.some((c) => ["failed", "blocked", "not-run"].includes(c.status) && c.record_ids?.includes(record.id))) {
       limits.push({ text: `Recorded execution ${status(record)}.`, record_id: record.id });
     }
@@ -174,14 +184,14 @@ export function renderPage(payload: WritePayload, log: EvidenceRecord[], meta: P
   const scopeDetails = `<details id="scope"><summary>Scope and commits</summary><p>${esc(scope.label)}${scope.include_working_tree ? " · includes working-tree content" : " · committed content"}</p><dl>${scope.base_sha ? `<dt>Base commit</dt><dd>${esc(scope.base_sha)}</dd>` : ""}${scope.head_sha ? `<dt>Head commit</dt><dd>${esc(scope.head_sha)}</dd>` : ""}</dl>${scope.commits.length ? `<ul>${scope.commits.map((c) => `<li>${linked(c.subject, c.url)}<br><small>${esc(c.sha)}</small></li>`).join("")}</ul>` : ""}${payload.scope.record_id ? `<p>${cite(payload.scope.record_id, "Scope resolution")}</p>` : ""}</details>`;
   const changes = payload.changes.length ? `<details id="changes"><summary>Changed files</summary><ul>${payload.changes.map((c) => `<li>${linked(c.path, extras.fileUrls?.[c.path])}${c.lines ? ` <span class="secondary">${esc(c.lines)}</span>` : ""}${paragraphs(c.note)}${c.record_id ? cite(c.record_id, "Change evidence") : ""}</li>`).join("")}</ul></details>` : "";
   const metadata: [string, unknown][] = [["Repository", meta.repo], ["Branch", meta.branch], ["Commit", meta.sha], ["Working tree", meta.dirty === undefined ? "not recorded" : meta.dirty ? "uncommitted changes" : "clean"], ["Recorded on", meta.date], ["Model", meta.model], ["Working directory", meta.cwd]];
-  const technical = `<details id="technical"><summary>Report metadata</summary><dl>${metadata.filter(([, value]) => value !== undefined).map(([label, value]) => `<dt>${label}</dt><dd>${esc(value)}</dd>`).join("")}</dl>${extras.tree ? `<p>Working-tree comparison: ${extras.tree.checked ? "checked" : "not checked"}${extras.tree.changed.length ? `; changed paths: ${esc(extras.tree.changed.join(", "))}` : ""}.</p>${extras.tree.before_id ? cite(extras.tree.before_id, "Before snapshot") : ""} ${extras.tree.after_id ? cite(extras.tree.after_id, "After snapshot") : ""}` : ""}</details>`;
+  const technical = `<details id="technical"><summary>Report metadata</summary><dl>${metadata.filter(([, value]) => value !== undefined).map(([label, value]) => `<dt>${label}</dt><dd>${esc(value)}</dd>`).join("")}</dl>${tree && !treeWarning ? `<p>Working-tree comparison: checked; no changed paths detected.</p>${tree.before_id ? cite(tree.before_id, "Before snapshot") : ""} ${tree.after_id ? cite(tree.after_id, "After snapshot") : ""}` : ""}</details>`;
   return `<!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src data:; style-src 'unsafe-inline'; script-src 'unsafe-inline'; base-uri 'none'; form-action 'none'; object-src 'none'"><title>${esc(payload.title)}</title><style>${CSS}</style></head><body><main>
 <header><p class="mode">${payload.mode === "explanation" ? "Explanation" : "Verification"}</p><h1>${esc(payload.title)}</h1><p>Scope: <a href="${esc(scopeUrl)}">${esc(scope.label)}</a></p></header>
 <section id="overview"><div class="lead">${paragraphs(payload.summary)}</div>${visuals("overview")}</section>
 ${payload.sections.map((s) => `<section id="${esc(s.id)}"><h2>${esc(s.title)}</h2>${paragraphs(s.text)}${visuals(s.id)}${evidence(s.evidence ?? [])}</section>`).join("\n")}
 ${payload.checks.length ? `<section id="checks"><h2>Checks</h2><ul>${payload.checks.map((c) => `<li><span class="status${c.status === "failed" || c.status === "blocked" ? " warning" : ""}">${esc(c.status)}</span><strong>${esc(c.label)}</strong>${paragraphs(c.summary)}${c.record_ids?.map((id) => cite(id)).join(" · ") ?? ""}</li>`).join("")}</ul></section>` : ""}
-${uniqueLimits.length ? `<section id="limits"><h2>Material limits</h2><ul>${uniqueLimits.map((l) => `<li>${paragraphs(l.text)}${l.record_id ? cite(l.record_id) : ""}</li>`).join("")}</ul></section>` : ""}
+${uniqueLimits.length || treeWarning ? `<section id="limits"><h2>Material limits</h2><ul>${treeWarning ? `<li class="warning">${paragraphs(treeWarning)}${snapshotCitations}</li>` : ""}${uniqueLimits.map((l) => `<li>${paragraphs(l.text)}${l.record_id ? cite(l.record_id) : ""}</li>`).join("")}</ul></section>` : ""}
 ${changes}${scopeDetails}${log.length ? `<details id="log"><summary>Exact command log · ${log.length} record${log.length === 1 ? "" : "s"}</summary>${recordHtml}</details>` : ""}${technical}
 </main><script>${SCRIPT}</script></body></html>`;
 }

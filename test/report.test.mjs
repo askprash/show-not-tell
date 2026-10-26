@@ -190,6 +190,30 @@ test('failed, refused, timed-out, authored and automatic limits stay in the read
   assert.match(html, /Operation is outside report-only mode/);
 });
 
+test('working-tree mutations and unchecked comparisons are visible with snapshot citations', () => {
+  for (const checked of [true, false]) {
+    const f = fixture();
+    f.log.push({ ...f.log[0], id: 'before', snapshot: 'before' });
+    f.log.push({ ...f.log[0], id: 'after', snapshot: 'after', exit: checked ? 0 : 1 });
+    f.extras.tree = { checked, changed: checked ? ['dirty.py', '<new>.txt'] : [], before_id: 'before', after_id: 'after' };
+    const warning = checked ? 'Files changed during the walkthrough: dirty.py, <new>.txt.' : 'Working-tree comparison could not be completed; repository changes may be undetected.';
+    // Supplying the same warning explicitly must not duplicate it.
+    f.extras.autoLimits = [{ text: warning }];
+    const html = render(f);
+    const limits = region(html, 'limits');
+    assert.ok(limits.includes(escape(warning)));
+    assert.equal(html.split(escape(warning)).length - 1, 1);
+    assert.match(limits, /href="#before">Before snapshot/);
+    assert.match(limits, /href="#after">After snapshot/);
+    assert.doesNotMatch(limits, /Recorded execution exit 1/);
+    const prefix = html.slice(0, html.indexOf(escape(warning)));
+    assert.equal((prefix.match(/<details\b/g) ?? []).length, (prefix.match(/<\/details>/g) ?? []).length, 'warning is outside expandable details');
+  }
+  const f = fixture();
+  f.extras.tree = { checked: true, changed: [] };
+  assert.equal(region(render(f), 'limits'), undefined, 'clean-tree result remains routine metadata');
+});
+
 test('checks distinguish inspected, not-run and executed results without inventing provenance', () => {
   const f = fixture();
   f.payload.sections[0].title = 'Stored numerical results';

@@ -243,6 +243,14 @@ test("snapshots before and after report files changed during the walkthrough", a
 		const res = await write(payload("r1"));
 		assert.equal(rendered().extras.tree.checked, true);
 		assert.deepEqual(rendered().extras.tree.changed, ["dirty.py", "emptydir/", "tmp.txt"]);
+		const html = readFileSync(res.details.path, "utf8");
+		const warning = "Files changed during the walkthrough: dirty.py, emptydir/, tmp.txt.";
+		assert.ok(html.includes(warning));
+		const prefix = html.slice(0, html.indexOf(warning));
+		assert.equal((prefix.match(/<details\b/g) ?? []).length, (prefix.match(/<\/details>/g) ?? []).length, "mutation warning is outside details");
+		const limits = html.match(/<section id="limits">([\s\S]*?)<\/section>/)[1];
+		assert.match(limits, /href="#r0">Before snapshot/);
+		assert.match(limits, /href="#r2">After snapshot/);
 		assert.equal(rendered().log[0].snapshot, "before");
 		assert.equal(rendered().log.at(-1).snapshot, "after");
 		const again = await write(payload("r1"));
