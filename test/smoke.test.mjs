@@ -11,15 +11,18 @@ import { after, before, test } from "node:test";
 import assert from "node:assert/strict";
 
 const piRoot = process.env.PI_ROOT ?? join(execSync("npm root -g", { encoding: "utf8" }).trim(), "@earendil-works", "pi-coding-agent");
+const reportUrl = new URL("../extensions/report.ts", import.meta.url).href;
+const reportWrapper = `import { renderPage as render } from ${JSON.stringify(reportUrl)}; export function renderPage(...args) { globalThis.__walkthroughRender = args; return render(...args); }`;
 const piAi = join(piRoot, "node_modules", "@earendil-works", "pi-ai", "dist", "index.js");
 registerHooks({
 	resolve(spec, ctx, next) {
+		if (spec === "./report.ts" && ctx.parentURL?.endsWith("/walkthrough.ts")) return { url: `data:text/javascript,${encodeURIComponent(reportWrapper)}`, shortCircuit: true };
 		if (spec === "@earendil-works/pi-ai") return { url: pathToFileURL(piAi).href, shortCircuit: true };
 		return next(spec, ctx);
 	},
 });
 
-const { default: walkthrough, prepareWriteArgs, parseDiffStat, writesWalkthroughDir, ALLOWED_TOOLS } = await import("../extensions/walkthrough.ts");
+const { default: walkthrough, prepareWriteArgs, parseCommandArgs, repositoryUrl, resolveScope, writesWalkthroughDir, ALLOWED_TOOLS } = await import("../extensions/walkthrough.ts");
 
 const tools = new Map();
 const handlers = new Map();
@@ -82,58 +85,48 @@ test("a walkthrough restricts the session to the two walkthrough tools", async (
 	assert.equal(writesWalkthroughDir("cp x .walkthrough/figs/../evidence.jsonl"), true);
 });
 
-const HEADINGS = ["1. Claim", "2. Map", "3. Evidence", "4. Checks changed", "5. Could it be wrong?", "6. Not verified", "7. What the result depends on"];
-
 const payload = (id, quote) => ({
-	title: "Walkthrough: smoke test",
-	scope: "fake scope",
-	claim: { text: "Prints hi.", confidence: "high: it ran" },
-	map: [{ path: "a.py", lines: "1-2", note: "nothing" }],
-	evidence: [{ claim: "echo works", record_id: id, what_to_look_for: "hi", ...(quote ? { quote } : {}) }],
-	checks_changed: [],
-	could_be_wrong: [{ alternative: "echo is aliased", test_that_would_show_it: "type echo" }],
-	not_verified: ["Windows"],
-	depends_on: [{ item: "r1 output", how_to_spot_check: "Run echo hi", record_id: "r1" }],
-	figures: [],
+	title: "Walkthrough: smoke test", mode: "verification", scope: { label: "Smoke commit", head: "HEAD" },
+	summary: "Prints hi.", sections: [{ id: "behavior", title: "Behavior", text: "Echo output", evidence: [{ record_id: id, summary: "Echo works", ...(quote ? { quote } : {}) }] }],
+});
+const rendered = () => { const [payload, log, meta, extras] = globalThis.__walkthroughRender; return { payload, log, meta, extras }; };
+
+test("stringified structural arguments are parsed before validation", () => {
+	assert.deepEqual(prepareWriteArgs({ sections: JSON.stringify([{ id: "behavior", title: "Title", text: "[prose]", evidence: JSON.stringify([{ record_id: "r1", summary: "ok" }]) }]) }).sections[0], { id: "behavior", title: "Title", text: "[prose]", evidence: [{ record_id: "r1", summary: "ok" }] });
+	assert.deepEqual(prepareWriteArgs({ checks: "[]", scope: '{"label":"Commit","head":"HEAD"}' }), { checks: [], scope: { label: "Commit", head: "HEAD" } });
 });
 
-test("stringified arguments are parsed before validation", () => {
-	assert.deepEqual(prepareWriteArgs({ checks_changed: "none" }).checks_changed, []);
-	assert.deepEqual(prepareWriteArgs({ checks_changed: '[{"what":"a","how":"b"}]' }).checks_changed, [{ what: "a", how: "b" }]);
-	assert.deepEqual(prepareWriteArgs({ map: [] }).map, []);
-	assert.deepEqual(prepareWriteArgs({ hinge_points: [] }).depends_on, []);
-	assert.deepEqual(prepareWriteArgs({ map: ['{"path":"a","lines":"1","note":"n"}'] }).map, [{ path: "a", lines: "1", note: "n" }]);
-	assert.deepEqual(prepareWriteArgs({ claim: '{"text":"t","confidence":"high"}' }).claim, { text: "t", confidence: "high" });
-	assert.deepEqual(prepareWriteArgs({ claim: "t", confidence: "low" }).claim, { text: "t", confidence: "low" });
-	assert.deepEqual(prepareWriteArgs({ claim: "\n<parameter name=\"text\">t", confidence: "high" }).claim, { text: "t", confidence: "high" });
-
-});
-
-test("write rejects bad ids and bad quotes, then renders the page", async () => {
-	const { title, scope, claim, ...rest } = payload("r1");
-	const part = await write({ title, scope, claim });
-	assert.match(part.content[0].text, /Still needed before the page can be written: map, evidence/);
-	assert.ok((await write(rest)).details.path, "the second half completes the page");
-	await assert.rejects(write(payload("r9")), (e) => /unknown record_id "r9"/.test(e.message) && /Valid record ids: r0, r1, r2, r4, r6/.test(e.message));
-	await assert.rejects(write(payload("r3")), /unknown record_id "r3"/); // refused records cannot be cited
-	const droppedRes = await write(payload("r1", "bye"));
-	assert.match(droppedRes.content[0].text, /Dropped quotes not found in their records: evidence\[0\] \(r1\)/);
-	assert.doesNotMatch(readFileSync(droppedRes.details.path, "utf8"), /<pre>bye<\/pre>/);
-
+test("write accumulates the new article, rejects ids and drops non-verbatim quotes", async () => {
+	const { title, scope, ...rest } = payload("r1");
+	const part = await write({ title, scope });
+	assert.deepEqual(part.details.missing, ["mode", "summary", "sections"]);
+	assert.ok((await write(rest)).details.path);
+	await assert.rejects(write(payload("r9")), /unknown record_id "r9"/);
+	await assert.rejects(write(payload("r3")), /unknown record_id "r3"/);
+	const dropped = await write(payload("r1", "hi  "));
+	assert.match(dropped.content[0].text, /Dropped quotes/);
+	assert.equal(rendered().payload.sections[0].evidence[0].quote, undefined);
+	assert.equal(rendered().log.find((r) => r.id === "r1").stdout, "hi\n1\n");
 	const res = await write(payload("r1", "hi"));
-	const file = res.details.path;
-	assert.ok(file.endsWith(join(".walkthrough", "walkthrough-smoke-test.html")) && existsSync(file));
-	const html = readFileSync(file, "utf8");
-	for (const h of HEADINGS) {
-		assert.ok(html.includes(`<h2>${h}</h2>`), `missing heading ${h}`);
+	assert.ok(existsSync(res.details.path));
+	const result = rendered();
+	for (const key of ["checks", "limits", "changes", "visuals"]) assert.deepEqual(result.payload[key], []);
+	assert.ok(result.extras.autoLimits.some((l) => /timed out/.test(l.text)));
+	assert.ok(result.extras.autoLimits.some((l) => /budget exhausted/.test(l.text)));
+	assert.ok(result.extras.autoLimits.some((l) => /mutation refused/.test(l.text)));
+	assert.equal(result.meta.model, "fake/model-1");
+	assert.match(result.extras.scope.warning, /not a Git repository/);
+});
+
+test("direct execute validates malformed nested shapes and references", async () => {
+	for (const patch of [{ scope: null }, { sections: [null] }, { checks: "none" }, { visuals: ["x"] }, { mode: "unknown" }, { checks: [{ label: "x", summary: "x", status: "unknown" }] }, { changes: [{ path: 1, note: "x" }] }, { sections: [{ id: "a", title: "a", text: "a", evidence: [null] }] }])
+		await assert.rejects(write({ ...payload("r1"), ...patch }), /expected|invalid/);
+	for (const id of ["overview", "r1", "r999", "Bad", "x_y"]) await assert.rejects(write({ ...payload("r1"), sections: [{ id, title: "t", text: "t" }] }), /invalid or colliding/);
+	await assert.rejects(write({ ...payload("r1"), sections: [{ id: "same", title: "t", text: "t" }, { id: "same", title: "t", text: "t" }] }), /colliding/);
+	for (const patch of [{ scope: { label: "x", head: "HEAD", record_id: "r99" } }, { limits: [{ text: "x", record_id: "r99" }] }, { checks: [{ label: "x", status: "passed", summary: "x" }] }, { checks: [{ label: "x", status: "inspected", summary: "x", record_ids: ["r99"] }] }]) {
+		handlers.get("session_start")({}, ctx());
+		await assert.rejects(write({ ...payload("r1"), ...patch }), /unknown record_id|requires at least one record/);
 	}
-	const order = HEADINGS.map((h) => html.indexOf(`<h2>${h}</h2>`));
-	assert.deepEqual([...order].sort((a, b) => a - b), order);
-	assert.match(html, /Not run because the budget ran out/);
-	assert.match(html, /Timed out after/);
-	assert.match(html, /Reader's spot-check list/);
-	assert.match(html, /model fake\/model-1/);
-	assert.doesNotMatch(html, /<script/i);
 });
 
 test("at_ref runs a new test against the parent commit in a temporary worktree", async () => {
@@ -172,64 +165,41 @@ test("at_ref runs a new test against the parent commit in a temporary worktree",
 	}
 });
 
-test("diffstat parsing handles --stat, --numstat and junk", () => {
-	const stat = parseDiffStat(" a/b.ts | 8 ++++++++\n c.py   | 44 +++++++++++++++++++++++++++++++++++++++++++--\n img.png | Bin 0 -> 12 bytes\n 3 files changed\n");
-	assert.deepEqual(stat[0], { path: "a/b.ts", add: 8, del: 0, approx: false });
-	assert.equal(stat[1].add + stat[1].del, 44);
-	assert.equal(stat.length, 2);
-	assert.deepEqual(parseDiffStat("10\t2\tx.py\n"), [{ path: "x.py", add: 10, del: 2, approx: false }]);
-	assert.equal(parseDiffStat("no stat here"), undefined);
-});
-
-test("figures: produces, embedding, the Map figure, and bad figure refs", async () => {
-	const repo = mkdtempSync(join(tmpdir(), "wt-fig-"));
-	const g = (args) => execSync(`git -c user.name=t -c user.email=t@t -c commit.gpgsign=false ${args}`, { cwd: repo, stdio: "pipe" });
-	g("init -q");
-	writeFileSync(join(repo, "a.py"), "x = 1\ny = 2\n");
-	g("add a.py");
-	g("commit -qm one");
-	writeFileSync(join(repo, "a.py"), "x = 1\ny = 3\nz = 4\n");
-	g("commit -qam two");
+test("visual preparation validates capture hashes, section placement, links and geometry", async () => {
 	const saved = cwd;
-	cwd = repo;
-	handlers.get("session_start")({ type: "session_start", reason: "new" }, ctx());
+	cwd = mkdtempSync(join(tmpdir(), "wt-fig-"));
+	handlers.get("session_start")({}, ctx());
+	process.env.WALKTHROUGH_MAX_RECORDS = "20";
 	try {
-		const r1 = await record({ command: "git show --stat --format=%h HEAD", why: "scope" });
-		assert.equal(r1.details.exit, 0);
 		const svg = '<svg xmlns="http://www.w3.org/2000/svg" width="10" height="10"><rect width="10" height="10"/></svg>';
-		const r2 = await record({ command: `mkdir -p .walkthrough/figs && printf '%s' '${svg}' > .walkthrough/figs/plot.svg`, why: "plot", produces: ".walkthrough/figs/plot.svg" });
-		assert.equal(r2.details.exit, 0);
-		assert.equal(r2.details.figures[0].path, join(".walkthrough", "figs", "r2-plot.svg"));
-		assert.equal(r2.details.figures[0].sha256.length, 64);
-		assert.match(r2.content[0].text, /figure: .*r2-plot\.svg/);
+		const r = await record({ command: `mkdir -p .walkthrough/figs && printf '%s' '${svg}' > .walkthrough/figs/plot.svg`, why: "diagram", produces: ".walkthrough/figs/plot.svg" });
+		assert.equal(r.details.figures[0].sha256.length, 64);
 		const two = await record({ command: `printf '%s' '${svg}' > .walkthrough/figs/a.svg && printf '%s' '${svg}' > .walkthrough/figs/b.svg`, why: "two plots", produces: ".walkthrough/figs/a.svg, .walkthrough/figs/b.svg" });
-		assert.deepEqual(two.details.figures.map((f) => f.path.split("/").pop()), ["r3-a.svg", "r3-b.svg"]);
-		const r3 = await record({ command: "true", why: "no file", produces: "missing.png" });
-		assert.match(r3.details.produces_missing, /was not written/);
-
-		const base = { ...payload("r1"), map: [{ path: "a.py", lines: "2-3", note: "changed y, added z", record_id: "r1" }] };
-		await assert.rejects(write({ ...base, figures: [{ record_id: "r4", caption: "nothing" }] }), /r4 did not produce a figure.*records with figures: r2 \(r2-plot\.svg\), r3 \(r3-a\.svg, r3-b\.svg\)/);
-		await assert.rejects(write({ ...base, figures: [{ record_id: "r2", caption: "x", file: "other.png" }] }), /did not produce a figure named other\.png/);
-		await assert.rejects(write({ ...base, figures: [{ record_id: "r2", caption: "x", section: "Appendix" }] }), /unknown section/);
-
-		const res = await write({ ...base, figures: [{ record_id: "r2", caption: "A square, 10 px." }, { record_id: "r3", caption: "Second file.", file: "b.svg", section: "Evidence" }] });
-		const html = readFileSync(res.details.path, "utf8");
-		const claimAt = html.indexOf("<h2>1. Claim</h2>");
-		const figAt = html.indexOf("data:image/svg+xml;base64,");
-		assert.ok(figAt > claimAt && figAt < html.indexOf("<h2>2. Map</h2>"), "first figure sits under the Claim");
-		assert.match(html, /A square, 10 px\. Produced by <a class="rid" href="#r2">/);
-		const mapSec = html.slice(html.indexOf("<h2>2. Map</h2>"), html.indexOf("<h2>3. Evidence</h2>"));
-		assert.match(mapSec, /<svg viewBox/);
-		assert.match(mapSec, /\+2 −1/);
-		assert.match(html, /cited in: Map, Evidence, What the result depends on, Map \(figure\)/);
-		assert.match(html, /<b>r4<\/b>.*not cited/);
-		assert.match(html, /Second file\. Produced by <a class="rid" href="#r3">/);
-		assert.match(html, /Expected figure not captured/);
-		assert.doesNotMatch(html, /<script/i);
-	} finally {
-		cwd = saved;
-		rmSync(repo, { recursive: true, force: true });
-	}
+		assert.equal(two.details.figures.length, 2);
+		const missing = await record({ command: "true", why: "no file", produces: "missing.png" });
+		assert.match(missing.details.produces_missing, /was not written/);
+		const stale = await record({ command: "touch -t 200001010000 .walkthrough/figs/plot.svg", why: "old image", produces: ".walkthrough/figs/plot.svg" });
+		assert.match(stale.details.produces_missing, /before this command/);
+		const visual = { record_id: "r1", kind: "diagram", caption: "A square", section_id: "behavior", links: [{ label: "Read", target: "section:behavior", x: 1, y: 2, width: 30, height: 40 }] };
+		for (const patch of [{ record_id: "r3" }, { file: "other.png" }, { section_id: "missing" }, { links: [{ ...visual.links[0], target: "javascript:alert(1)" }] }, { links: [{ ...visual.links[0], target: "record:r999" }] }, { links: [{ ...visual.links[0], width: 101 }] }, { links: [{ ...visual.links[0], x: -1 }] }, { links: [{ ...visual.links[0], height: 0 }] }, { links: [{ ...visual.links[0], y: NaN }] }])
+			await assert.rejects(write({ ...payload("r1"), visuals: [{ ...visual, ...patch }] }), /did not produce|unknown|geometry|expected number/);
+		await write({ ...payload("r1"), visuals: [visual, { record_id: "r2", file: "b.svg", kind: "plot", caption: "Second" }] });
+		assert.equal(rendered().extras.visuals[0].section_id, "behavior", "first visual stays in its chosen section");
+		assert.equal(rendered().extras.visuals[1].section_id, "overview");
+		assert.match(rendered().extras.visuals[0].src, /^data:image\/svg\+xml;base64,/);
+		assert.ok(rendered().extras.autoLimits.some((l) => /Expected image unavailable/.test(l.text)));
+		await record({ command: "git push origin main", why: "Refused mutation" });
+		const refusalLink = { ...visual, links: [{ ...visual.links[0], target: "record:r6" }] };
+		// The preceding successful write added r5 (after snapshot); refusal is r6.
+		await write({ ...payload("r1"), visuals: [refusalLink] });
+		assert.ok(rendered().extras.autoLimits.some((l) => l.record_id === "r6"), "navigation alone does not cover refusal");
+		await write({ ...payload("r1"), visuals: [refusalLink], limits: [{ text: "Push was refused; no remote changes were made.", record_id: "r6" }] });
+		assert.ok(!rendered().extras.autoLimits.some((l) => l.record_id === "r6"), "explicit refusal limit is not repeated");
+		for (const patch of [{ sections: payload("r6").sections }, { checks: [{ label: "Push", summary: "Refused", status: "blocked", record_ids: ["r6"] }] }, { visuals: [{ ...visual, record_id: "r6" }] }])
+			await assert.rejects(write({ ...payload("r1"), ...patch }), /unknown record_id "r6"/);
+		writeFileSync(join(cwd, r.details.figures[0].path), "tampered");
+		await assert.rejects(write({ ...payload("r1"), visuals: [visual] }), /changed after it was recorded/);
+	} finally { rmSync(cwd, { recursive: true, force: true }); cwd = saved; }
 });
 
 test("/walkthrough restricts the tools before it sends the skill", async () => {
@@ -257,12 +227,12 @@ test("snapshots before and after report files changed during the walkthrough", a
 	try {
 		const r1 = await record({ command: "echo x > tmp.txt && echo y >> dirty.py && mkdir emptydir", why: "writes a file" });
 		assert.equal(r1.details.id, "r1");
-		const res = await write({ ...payload("r1"), map: [] });
-		const html = readFileSync(res.details.path, "utf8");
-		assert.match(html, /Files changed during the walkthrough<\/span> <code>dirty\.py<\/code>, <code>emptydir\/<\/code>, <code>tmp\.txt<\/code>\./);
-		assert.match(html, /<details id="r0">/);
-		assert.match(html, /<details id="r2">.*Working tree when walkthrough_write was called/);
-		const again = await write({ ...payload("r1"), map: [] });
+		const res = await write(payload("r1"));
+		assert.equal(rendered().extras.tree.checked, true);
+		assert.deepEqual(rendered().extras.tree.changed, ["dirty.py", "emptydir/", "tmp.txt"]);
+		assert.equal(rendered().log[0].snapshot, "before");
+		assert.equal(rendered().log.at(-1).snapshot, "after");
+		const again = await write(payload("r1"));
 		const log = readFileSync(join(repo, ".walkthrough", "evidence.jsonl"), "utf8").trim().split("\n").map((l) => JSON.parse(l));
 		assert.deepEqual(log.map((r) => r.id), ["r0", "r1", "r2"], "a second write replaces the after snapshot");
 		assert.ok(again.details.path);
@@ -276,11 +246,121 @@ test("snapshots before and after report files changed during the walkthrough", a
 	handlers.get("session_start")({ type: "session_start", reason: "new" }, ctx());
 	try {
 		await record({ command: "mkdir -p .walkthrough/figs && echo ok > .walkthrough/figs/n.txt", why: "writes only under figs" });
-		const res = await write({ ...payload("r1"), map: [] });
-		assert.match(readFileSync(res.details.path, "utf8"), /Working tree unchanged during the walkthrough\./);
+		const res = await write(payload("r1"));
+		assert.deepEqual(rendered().extras.tree.changed, []);
 	} finally {
 		cwd = saved;
 		rmSync(clean, { recursive: true, force: true });
 	}
 });
 
+
+
+test("mode parsing preserves scope punctuation, invalid modes do not activate, commands reset drafts and budgets", async () => {
+	const scope = 'HEAD~2..HEAD -- path/a.ts:12, "why?"';
+	assert.deepEqual(parseCommandArgs(`--mode=explanation ${scope}`), { mode: "explanation", scope });
+	assert.deepEqual(parseCommandArgs(`--mode explanation ${scope}`), { mode: "explanation", scope });
+	assert.deepEqual(parseCommandArgs(scope), { mode: "verification", scope });
+	for (const arg of ["--mode=wrong HEAD", "--mode bad HEAD", "--mode", "--mode="]) assert.equal(parseCommandArgs(arg), undefined);
+	handlers.get("session_start")({}, ctx());
+	const count = activeToolCalls.length;
+	const messages = sent.length;
+	assert.equal(activeToolCalls.length, count, "ordinary session start preserves tools");
+	assert.equal(handlers.has("input"), false, "invalid commands cannot activate through an eager input hook");
+	await commands.get("walkthrough").handler("--mode=wrong HEAD", { hasUI: true });
+	assert.equal(activeToolCalls.length, count);
+	assert.equal(sent.length, messages);
+	process.env.WALKTHROUGH_MAX_RECORDS = "1";
+	await commands.get("walkthrough").handler(`--mode=explanation ${scope}`, { hasUI: true });
+	assert.match(sent.at(-1), /Mode: explanation/);
+	assert.ok(sent.at(-1).includes(scope));
+	assert.equal((await record({ command: "echo fresh", why: "fresh" })).details.id, "r1");
+	assert.equal((await record({ command: "echo capped", why: "capped" })).details.refused, "budget");
+	await write({ title: "Old draft" });
+	await commands.get("walkthrough").handler("--mode=verification HEAD", { hasUI: true });
+	assert.match(sent.at(-1), /Mode: verification/);
+	assert.equal((await record({ command: "echo reset", why: "reset" })).details.id, "r1");
+	const part = await write({ summary: "New" });
+	assert.ok(part.details.missing.includes("title"), "draft reset");
+	const log = readFileSync(join(cwd, ".walkthrough/evidence.jsonl"), "utf8").trim().split("\n").map(JSON.parse);
+	assert.deepEqual(log.map((r) => r.id), ["r0", "r1"]);
+	assert.equal(log[1].stdout, "reset\n");
+	process.env.WALKTHROUGH_MAX_RECORDS = "20";
+});
+
+test("scope resolution uses immutable local commits and canonical credential-free GitHub/GitLab URLs", async () => {
+	for (const [remote, expected] of [
+		["git@github.com:owner/repo.git", "https://github.com/owner/repo"],
+		["https://user:secret@github.com/owner/repo.git?token=private#secret", "https://github.com/owner/repo"],
+		["ssh://git@gitlab.com/group/sub/repo.git", "https://gitlab.com/group/sub/repo"],
+		["https://gitlab.com/group/repo", "https://gitlab.com/group/repo"],
+	]) assert.equal(repositoryUrl(remote), expected);
+	for (const remote of ["file:///tmp/repo", "javascript:alert(1)", "https://example.com/a/b", "https://github.com/a/b/tree/main", "https://github.com/a/b%2fc", "https://github.com/a/b/", "https://github.com/a/x/../b", "https://github.com/a/%2e%2e/b", "https://gitlab.com/a/-/blob/main", "https://github.com:999/a/b", "git://github.com/a/b"]) assert.equal(repositoryUrl(remote), undefined, remote);
+	const saved = cwd;
+	cwd = mkdtempSync(join(tmpdir(), "wt-scope-"));
+	const g = (args) => execSync(`git -c user.name=t -c user.email=t@t -c commit.gpgsign=false ${args}`, { cwd, encoding: "utf8" }).trim();
+	try {
+		g("init -q"); writeFileSync(join(cwd, "a file.ts"), "one\ntwo\n"); g("add ."); g("commit -qm 'First subject'");
+		writeFileSync(join(cwd, "a file.ts"), "one\nthree\n"); g("commit -qam 'Second subject'");
+		g("remote add origin 'https://user:private@github.com/owner/repo.git?token=secret#private'");
+		const head = g("rev-parse HEAD"); const base = g("rev-parse HEAD~1");
+		const single = resolveScope(cwd, { label: "Single commit", head: "HEAD" }).scope;
+		assert.equal(single.head_sha, head); assert.equal(single.base_sha, undefined);
+		assert.deepEqual(single.commits.map((c) => c.subject), ["Second subject"]);
+		assert.match(single.warning, /committed content only/);
+		assert.equal(single.head_url, `https://github.com/owner/repo/commit/${head}`);
+		const range = resolveScope(cwd, { label: "Range", head: "HEAD", base: "HEAD~1", include_working_tree: true }).scope;
+		assert.equal(range.base_sha, base);
+		assert.equal(range.compare_url, `https://github.com/owner/repo/compare/${base}...${head}`);
+		assert.match(range.warning, /Working-tree content is included explicitly/);
+		for (const ref of ["missing-ref", "--all", "--output=/tmp/unsafe"]) assert.match(resolveScope(cwd, { label: "Bad", head: ref }).scope.warning, /head could not be resolved/);
+		assert.match(resolveScope(cwd, { label: "Bad base", head: "HEAD", base: "missing-ref" }).scope.warning, /base could not be resolved/);
+		handlers.get("session_start")({}, ctx());
+		await record({ command: "echo inspected", why: "inspection" });
+		await write({ ...payload("r1"), changes: [{ path: "a file.ts", lines: "1-2", note: "Changed line" }] });
+		assert.equal(rendered().extras.fileUrls["a file.ts"], `https://github.com/owner/repo/blob/${head}/a%20file.ts#L1-L2`);
+		assert.doesNotMatch(JSON.stringify(rendered().extras), /private|secret|user:/);
+		for (const path of ["../a", "/tmp/a", "a/*.ts", "a,b", "{a,b}", "a/../b", "C:\\a"]) await assert.rejects(write({ ...payload("r1"), changes: [{ path, note: "Invalid" }] }), /repository-relative path/);
+		await write({ ...payload("r1"), changes: [{ path: "missing.ts", note: "Missing" }] });
+		assert.match(rendered().extras.autoLimits[0].text, /unavailable as a committed file/);
+		g("remote set-url origin git@gitlab.com:group/sub/repo.git");
+		const lab = resolveScope(cwd, { label: "GitLab", head: "HEAD", base: "HEAD~1" }).scope;
+		assert.equal(lab.compare_url, `https://gitlab.com/group/sub/repo/-/compare/${base}...${head}`);
+		await write({ ...payload("r1"), changes: [{ path: "a file.ts", lines: "1-2", note: "Changed" }] });
+		assert.equal(rendered().extras.fileUrls["a file.ts"], `https://gitlab.com/group/sub/repo/-/blob/${head}/a%20file.ts#L1-2`);
+		g("remote set-url origin https://unsupported.test/group/repo");
+		assert.equal(resolveScope(cwd, { label: "Local", head: "HEAD" }).scope.head_url, undefined);
+		await write({ ...payload("r1"), changes: [], checks: [{ label: "Source", status: "inspected", summary: "Read source", record_ids: ["r1"] }] });
+		assert.equal(rendered().extras.autoLimits.length, 0, "exit-zero inspection is not automatically a passed check");
+		assert.equal(rendered().payload.checks[0].status, "inspected");
+	} finally { rmSync(cwd, { recursive: true, force: true }); cwd = saved; }
+});
+
+
+test("elapsed budgets, process-group timeout cleanup and at_ref option rejection remain enforced", async () => {
+	const saved = cwd;
+	cwd = mkdtempSync(join(tmpdir(), "wt-budget-"));
+	handlers.get("session_start")({}, ctx());
+	process.env.WALKTHROUGH_BUDGET_S = "1";
+	try {
+		assert.equal((await record({ command: "echo should-not-run", why: "budget" })).details.refused, "budget");
+		delete process.env.WALKTHROUGH_BUDGET_S;
+		handlers.get("session_start")({}, ctx());
+		const timed = await record({ command: "(sleep 4; echo leaked > child-marker) & wait", why: "group cleanup", timeout_s: 1 });
+		assert.equal(timed.details.timed_out, true);
+		await new Promise((r) => setTimeout(r, 3500));
+		assert.equal(existsSync(join(cwd, "child-marker")), false);
+		execSync("git init -q", { cwd });
+		const bad = await record({ command: "echo should-not-run", why: "unsafe ref", at_ref: "--all" });
+		assert.equal(bad.details.exit, null);
+		assert.match(bad.details.stderr, /not a commit/);
+		const nonzero = await record({ command: "exit 7", why: "Failure" });
+		await write({ ...payload(nonzero.details.id), checks: [], limits: [], visuals: [] });
+		assert.ok(rendered().extras.autoLimits.some((l) => /status 7/.test(l.text)));
+		await write({ ...payload(nonzero.details.id), checks: [{ label: "Failure", status: "failed", summary: "Exited 7", record_ids: [nonzero.details.id] }], limits: [], visuals: [] });
+		assert.ok(!rendered().extras.autoLimits.some((l) => l.record_id === nonzero.details.id));
+	} finally {
+		delete process.env.WALKTHROUGH_BUDGET_S;
+		rmSync(cwd, { recursive: true, force: true }); cwd = saved;
+	}
+});
