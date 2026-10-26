@@ -45,7 +45,7 @@ For diagrams, use the svg-figs skill if it is available. Run its environment che
 
 Record the command that writes each SVG or PNG and pass the path in `produces`. Only figures captured by a record can be embedded. Existing, recorded source data may be used for an explanatory visual, but label it as stored data; do not present it as a fresh experiment. In verification mode, favor a figure from the demonstrated run.
 
-Give plots meaningful quantity names and units. A caption says what the reader should notice, then the essential conditions. Put lengthy setup details in an adjacent section rather than repeating them in every caption. Keep commands and hashes out of captions.
+Give plots meaningful quantity names and units. A caption says what the reader should notice, then the relevant conditions. Put lengthy setup details in an adjacent section rather than repeating them in every caption. Keep commands and hashes out of captions.
 
 Diagrams can have clickable regions. In the visual's `links`, supply a label, `target` of `section:<id>` or `record:<id>`, and `x`, `y`, `width`, `height` as percentages of the entire image bounds. Section targets are `overview` or authored section IDs, not generated sections such as `checks` or `scope`. The tool validates targets and geometry. Links are HTML overlays on a non-active image, so the SVG cannot inject page code. Link the diagram to the sections that explain its nodes; the renderer also supplies text links for keyboard access.
 
