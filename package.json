@@ -12,6 +12,14 @@
     "code-review",
     "show-not-tell"
   ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/askprash/show-not-tell.git"
+  },
+  "homepage": "https://github.com/askprash/show-not-tell#readme",
+  "bugs": {
+    "url": "https://github.com/askprash/show-not-tell/issues"
+  },
   "files": [
     "extensions/",
     "skills/",

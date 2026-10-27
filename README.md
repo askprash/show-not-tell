@@ -65,7 +65,7 @@ Walkthroughs are report-only. The runner refuses destructive Git and deletion co
 Grant read access to the package and Git's configuration, and write access to the caches that figures use:
 
 ```sh
-nono run --profile mit-parley --allow-cwd --workdir "$PWD" \
+nono run --profile <your-profile> --allow-cwd --workdir "$PWD" \
   --read /path/to/pi-walkthrough --read-file ~/.gitconfig \
   --allow ~/.cache/uv --allow ~/.cache/agent-walkthrough --allow ~/.matplotlib \
   -- pi -e /path/to/pi-walkthrough
