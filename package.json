@@ -1,5 +1,5 @@
 {
-  "name": "pi-walkthrough",
+  "name": "@askprash/walkthrough",
   "version": "0.1.0",
   "description": "Readable, source-linked code walkthroughs for Pi, with KaTeX math, tables and linted diagrams",
   "license": "MIT",
@@ -8,7 +8,8 @@
     "pi-package",
     "pi",
     "walkthrough",
-    "evidence"
+    "evidence",
+    "code-review"
   ],
   "files": [
     "extensions/",
@@ -33,6 +34,9 @@
   "peerDependencies": {
     "@earendil-works/pi-ai": "*",
     "@earendil-works/pi-coding-agent": "*"
+  },
+  "publishConfig": {
+    "access": "public"
   },
   "scripts": {
     "test": "node --test test/*.test.mjs"

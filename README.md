@@ -1,4 +1,4 @@
-# pi-walkthrough
+# @askprash/walkthrough
 
 Walk through a code change in a readable HTML page, with links to its commits and the work behind it. Start with an explanation or a result. Open the exact commands and output when you want to inspect the evidence.
 
@@ -14,7 +14,7 @@ Or try the package for one session without installing it:
 pi -e /path/to/pi-walkthrough
 ```
 
-The package is prepared for npm distribution but has not been published. The intended npm install command is `pi install npm:pi-walkthrough` after publication. A local checkout needs `npm install` first, for KaTeX.
+The package is prepared for npm distribution but has not been published. After publication, install it with `pi install npm:@askprash/walkthrough`. A local checkout needs `npm install` first, for KaTeX.
 
 ## Choose a walkthrough
 
