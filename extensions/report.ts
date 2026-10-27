@@ -113,14 +113,38 @@ function diffKind(line: string): DiffKind {
   return "ctx";
 }
 
+/**
+ * Per-line diff classes, shading only the diff regions of an output. A region is a run of
+ * consecutive +/-, hunk and file-header lines (with unified context lines once a hunk header has
+ * been seen). It counts as a diff when it has a header, both additions and deletions, or is
+ * grep -n output of two or more changed lines. So a command that prints a diff and then
+ * something else gets its diff part shaded, while bullet lists and "--- subject" log lines do not.
+ */
+export function diffKinds(text: string): DiffKind[] {
+  const lines = text.split("\n");
+  const raw = lines.map(diffKind);
+  const out: DiffKind[] = raw.map(() => "ctx");
+  let i = 0;
+  while (i < lines.length) {
+    if (raw[i] === "ctx") { i++; continue; }
+    let j = i, header = false, adds = 0, dels = 0, grep = 0;
+    while (j < lines.length) {
+      const k = raw[j];
+      if (k === "hunk" || k === "file") header = true;
+      else if (k === "add") adds++;
+      else if (k === "del") dels++;
+      else if (!(header && (lines[j].startsWith(" ") || lines[j] === ""))) break;
+      if (k !== "ctx" && GREP_PREFIX.test(lines[j])) grep++;
+      j++;
+    }
+    if (header || (adds && dels) || grep >= 2) for (let k = i; k < j; k++) out[k] = raw[k];
+    i = j;
+  }
+  return out;
+}
+
 export function isDiff(text: string): boolean {
-  const lines = text.split("\n").filter((l) => l.trim());
-  if (lines.length < 2) return false;
-  const kinds = lines.map(diffKind);
-  const adds = kinds.filter((k) => k === "add").length, dels = kinds.filter((k) => k === "del").length;
-  if (!adds && !dels) return false;
-  if (kinds.some((k) => k === "hunk" || k === "file")) return true;
-  return adds > 0 && dels > 0 && (adds + dels) / lines.length >= 0.5;
+  return diffKinds(text).some((k) => k !== "ctx");
 }
 
 /**
@@ -128,30 +152,35 @@ export function isDiff(text: string): boolean {
  * the text content is byte-for-byte the recorded output. Colors are vermilion and blue, which
  * stay distinct with red-green color blindness, and the +/- markers keep the meaning without color.
  */
-function diffCode(text: string): string {
+function diffCode(text: string, kinds: DiffKind[]): string {
   const lines = text.split("\n");
   return lines.map((l, i) => {
-    const k = diffKind(l);
+    const k = kinds[i];
     const nl = i < lines.length - 1 ? "\n" : "";
     return k === "ctx" ? esc(l) + nl : `<span class="d-${k}">${esc(l)}${nl}</span>`;
   }).join("");
 }
 
-function diffSummary(text: string): string {
-  const kinds = text.split("\n").map(diffKind);
+function diffSummary(kinds: DiffKind[]): string {
   const adds = kinds.filter((k) => k === "add").length, dels = kinds.filter((k) => k === "del").length;
   return `<p class="diff-key"><span class="d-add">+${adds} added</span> <span class="d-del">\u2212${dels} removed</span></p>`;
 }
 
-/** Exact recorded text in a code block, shaded as a diff when it is one. */
-export function codeBlock(text: string): string {
-  return isDiff(text) ? `<pre class="diff"><code>${diffCode(text)}</code></pre>` : `<pre><code>${esc(text)}</code></pre>`;
+/**
+ * Exact recorded text in a code block, shaded as a diff when it is one. A short evidence quote
+ * taken from a diff region of its record (fromDiff) is shaded line by line even if it is one line.
+ */
+export function codeBlock(text: string, fromDiff = false): string {
+  let kinds = diffKinds(text);
+  if (fromDiff && !kinds.some((k) => k !== "ctx")) kinds = text.split("\n").map(diffKind);
+  return kinds.some((k) => k !== "ctx") ? `<pre class="diff"><code>${diffCode(text, kinds)}</code></pre>` : `<pre><code>${esc(text)}</code></pre>`;
 }
 
 function output(label: string, text: string, cut = 0): string {
   const view = cut > 0 ? "" : structured(text);
-  const diff = !view && isDiff(text);
-  return `<section class="output"><h4>${label}</h4>${cut > 0 ? `<p class="warning">Truncated: ${esc(cut)} bytes omitted from ${label.toLowerCase()}. This is not the complete output.</p>` : ""}${view}${view ? `<details><summary>Exact recorded ${label.toLowerCase()}</summary>` : ""}${diff ? diffSummary(text) : ""}${codeBlock(text)}${view ? "</details>" : ""}</section>`;
+  const kinds = view ? [] : diffKinds(text);
+  const diff = kinds.some((k) => k !== "ctx");
+  return `<section class="output"><h4>${label}</h4>${cut > 0 ? `<p class="warning">Truncated: ${esc(cut)} bytes omitted from ${label.toLowerCase()}. This is not the complete output.</p>` : ""}${view}${view ? `<details><summary>Exact recorded ${label.toLowerCase()}</summary>` : ""}${diff ? diffSummary(kinds) : ""}${codeBlock(text)}${view ? "</details>" : ""}</section>`;
 }
 
 const CSS = `
@@ -237,7 +266,7 @@ function renderBody(payload: WritePayload, log: EvidenceRecord[], meta: PageMeta
   const evidence = (items: NonNullable<WritePayload["sections"][number]["evidence"]>) => {
     const groups = new Map<string, typeof items>();
     for (const item of items) groups.set(item.record_id, [...(groups.get(item.record_id) ?? []), item]);
-    return [...groups].map(([id, items]) => `<div class="evidence">${items.map((item) => `${prose(item.summary)}${item.quote ? `<blockquote>${codeBlock(item.quote)}</blockquote>` : ""}`).join("")}<p>${cite(id)}</p></div>`).join("");
+    return [...groups].map(([id, items]) => `<div class="evidence">${items.map((item) => `${prose(item.summary)}${item.quote ? `<blockquote>${codeBlock(item.quote, isDiff(byId.get(id)?.stdout ?? ""))}</blockquote>` : ""}`).join("")}<p>${cite(id)}</p></div>`).join("");
   };
   const tree = extras.tree;
   const treeWarning = tree && (!tree.checked || tree.changed.length) ? [

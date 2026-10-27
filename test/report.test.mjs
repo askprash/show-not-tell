@@ -372,3 +372,24 @@ test('reading aids: contents list for longer pages, expand/collapse and copy con
   assert.match(html, /data-copy="cmd-R8"/);
   assert.equal((html.match(/<script>/g) ?? []).length, 1);
 });
+
+test('diff regions are shaded when a command prints a diff followed by other output', async () => {
+  const { diffKinds } = await import('../extensions/report.ts');
+  // grep -n over a diff, then a separator and test-file lines (the TAESOPT record r6 shape).
+  const mixed = '51:-            p_al, T_al, h_al, s_al,\n53:+            pr_state = gas_pressure_ratio_partials(alpha,\n188:-            pt41_pl = pt41_pl + p_al[i]\n----\n14:@testset "Thermo equivalence" begin\n57:  @test dev.cp < tcp\n     289 test/unit_test_thermo_equivalence.jl\n';
+  const k = diffKinds(mixed);
+  assert.deepEqual(k.slice(0, 3), ['del', 'add', 'del']);
+  assert.ok(k.slice(3).every((x) => x === 'ctx'), 'test-file lines after the diff stay plain');
+  const f = fixture();
+  f.log[0].stdout = mixed;
+  const html = render(f);
+  assert.match(html, /<span class="d-del">51:-            p_al/);
+  assert.match(html, /<span class="d-add">\+1 added<\/span> <span class="d-del">\u22122 removed<\/span>/);
+  // A one-line evidence quote from a diff record is shaded too.
+  f.payload.sections[0].evidence[0].quote = '53:+            pr_state = gas_pressure_ratio_partials(alpha,';
+  assert.match(render(f), /<blockquote><pre class="diff"><code><span class="d-add">53:\+/);
+  // git log --stat with "--- <hash> <subject>" headers is not a diff.
+  assert.ok(diffKinds('--- 5623d780 docs(thermo): document\n src/a.jl | 4 ++--\n--- 958284b4 refactor: one dispatch\n').every((x) => x === 'ctx'));
+  // A lone "+" line in program output is not a diff.
+  assert.ok(diffKinds('Speedup\n+1.5x faster\nDone').every((x) => x === 'ctx'));
+});
