@@ -48,13 +48,15 @@ Each figkit diagram is linted, previewed for the agent, and embedded as an image
 
 ## Recording and safety
 
-During a walkthrough the only tools are `walkthrough_record`, which runs a command and stores its output, and `walkthrough_write`, which checks evidence references, quotes and figure hashes before rendering. Recorded commands and output are never rewritten.
+During a walkthrough the only tools are `walkthrough_record`, which runs a command and stores its output, and `walkthrough_write`, which checks evidence references, quotes and figure hashes before rendering. Recorded commands and output are never rewritten. Once the page is written, the session gets its previous tools back.
 
-| Limit | Default | Override |
-|---|---|---|
-| Commands | 20 | `WALKTHROUGH_MAX_RECORDS` |
-| Total time | 5 min | `WALKTHROUGH_BUDGET_S` |
-| Per command | 60 s, up to 120 s | `timeout_s` |
+| Limit | Default | Per run | Per session |
+|---|---|---|---|
+| Commands | 20 | `--records=40` | `/walkthrough-limits records=40` |
+| Total time | 5 min | `--time=15m` | `/walkthrough-limits time=15m` |
+| Per command | 60 s, up to 120 s | set by the agent | |
+
+Plain phrases work too: `/walkthrough the last commit, use up to 40 commands and take 15 minutes`. Without the slash command, ask in plain language ("walk me through the last commit, take 15 minutes") and the agent calls `walkthrough_start` with those limits; "from now on" sets them for the session. Per-run options override the session default, which overrides `WALKTHROUGH_MAX_RECORDS` and `WALKTHROUGH_BUDGET_S`. `/walkthrough-limits` with no arguments shows the current budget, and `reset` returns to the defaults. A walkthrough cannot change its own budget, and the page records the budget it ran under.
 
 Walkthroughs are report-only. The runner refuses destructive Git and deletion commands, protects its own files, and reports working-tree changes from before-and-after snapshots. **It is not a sandbox**: commands can still write files, and ignored files are not checked. Use an OS sandbox when you need isolation.
 

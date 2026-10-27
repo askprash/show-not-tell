@@ -44,6 +44,7 @@ const KILL_GRACE_MS = 2000;
 const MAX_FIG_BYTES = 5 * 1024 * 1024;
 const MAX_FIGS_PER_RECORD = 4;
 export const ALLOWED_TOOLS = ["walkthrough_record", "walkthrough_write"];
+const LIMITS_ENTRY = "walkthrough-limits";
 const WRITE_KEYS = ["title", "mode", "scope", "summary", "sections"];
 const OPTIONAL_ARRAYS = ["checks", "limits", "changes", "visuals", "references"];
 
@@ -431,6 +432,78 @@ function repositoryPath(path: string): boolean {
 		path.split("/").every((p) => p !== "" && p !== "." && p !== "..");
 }
 
+// ---------- budget limits ----------
+
+export interface Limits { records?: number; time_s?: number }
+export const LIMIT_RANGE = { records: [1, 200], time_s: [30, 7200] } as const;
+export const DEFAULT_LIMITS = { records: 20, time_s: 300 } as const;
+
+/** "15m", "15 min", "900s", "900", "1h", "1h30m", "1.5 hours" -> seconds. */
+export function parseDuration(text: string): number | undefined {
+	const t = text.trim().toLowerCase().replace(/\s+/g, "");
+	if (/^\d+(?:\.\d+)?$/.test(t)) return Math.round(Number(t));
+	// Longest unit names first, so "minutes" is not read as "m" followed by junk.
+	const re = /(\d+(?:\.\d+)?)(hours|hour|hrs|hr|h|minutes|minute|mins|min|m|seconds|second|secs|sec|s)/g;
+	let total = 0, used = "", m: RegExpExecArray | null;
+	while ((m = re.exec(t))) {
+		const unit = m[2][0];
+		total += Number(m[1]) * (unit === "h" ? 3600 : unit === "m" ? 60 : 1);
+		used += m[0];
+	}
+	return used && used === t ? Math.round(total) : undefined;
+}
+
+export function formatDuration(s: number): string {
+	if (s % 3600 === 0) return `${s / 3600} h`;
+	if (s >= 60 && s % 60 === 0) return `${s / 60} min`;
+	return `${s} s`;
+}
+
+/** Problems with requested limits; an empty list means they are in range. */
+export function checkLimits(l: Limits): string[] {
+	const out: string[] = [];
+	const [r0, r1] = LIMIT_RANGE.records, [t0, t1] = LIMIT_RANGE.time_s;
+	if (l.records !== undefined && (!Number.isInteger(l.records) || l.records < r0 || l.records > r1)) out.push(`records must be a whole number from ${r0} to ${r1}`);
+	if (l.time_s !== undefined && (!Number.isFinite(l.time_s) || l.time_s < t0 || l.time_s > t1)) out.push(`time must be from ${formatDuration(t0)} to ${formatDuration(t1 )}`);
+	return out;
+}
+
+// Budget phrases only: a lead word, a number and a unit. Bare mentions such as "the 5 minute
+// timeout change" or "the last 3 commits" have no lead word and stay in the scope.
+const NL_LEAD = String.raw`(?:use|using|take|taking|spend|spending|allow|allowing|with|budget(?:\s+of)?|limit(?:\s+of)?|up\s+to|at\s+most|max(?:imum)?(?:\s+of)?|in|within|for)`;
+const NL_RECORDS = new RegExp(String.raw`(^|[\s,;(])(?:and\s+)?${NL_LEAD}\s+(?:an?\s+|up\s+to\s+|at\s+most\s+)*(\d+)[\s-]*(?:commands?|records?|steps?|calls?)\b(?:\s+(?:budget|limit|max(?:imum)?))?`, "gi");
+const NL_TIME = new RegExp(String.raw`(^|[\s,;(])(?:and\s+)?${NL_LEAD}\s+(?:an?\s+|up\s+to\s+|at\s+most\s+)*((?:\d+(?:\.\d+)?[\s-]*(?:hours?|hrs?|h|minutes?|mins?|m|seconds?|secs?|s)(?=\d|\b)\s*)+)(?:(?:time\s+)?(?:budget|limit|max(?:imum)?)\b)?`, "gi");
+
+/**
+ * Pull limits out of /walkthrough arguments: flags (--records=40, --time=15m) and plain phrases
+ * ("use up to 40 commands", "in 15 minutes", "with a 10 minute budget"). Returns the rest as scope.
+ */
+export function extractLimits(args: string): { limits: Limits; rest: string; errors: string[]; matched: string[] } {
+	const limits: Limits = {};
+	const errors: string[] = [];
+	const matched: string[] = [];
+	let rest = args.replace(/(^|\s)--(records|time)(?:=(\S+)|\s+(\S+))(?=\s|$)/g, (all, space, key, eq, sep) => {
+		const value = eq ?? sep;
+		if (key === "records") { if (/^\d+$/.test(value)) limits.records = Number(value); else errors.push(`--records needs a whole number, not "${value}"`); }
+		else { const d = parseDuration(value); if (d !== undefined) limits.time_s = d; else errors.push(`--time needs a duration such as 15m or 900s, not "${value}"`); }
+		matched.push(all.trim());
+		return space;
+	});
+	if (/(^|\s)--(records|time)(?:=|\s|$)/.test(rest)) errors.push("--records and --time need a value");
+	rest = rest.replace(NL_RECORDS, (all, lead, n) => {
+		if (limits.records !== undefined) return all;
+		limits.records = Number(n); matched.push(all.trim()); return lead;
+	});
+	rest = rest.replace(NL_TIME, (all, lead, amount) => {
+		const d = parseDuration(amount.replace(/-/g, ""));
+		if (limits.time_s !== undefined || d === undefined) return all;
+		limits.time_s = d; matched.push(all.trim()); return lead;
+	});
+	rest = rest.replace(/\s+([,;])/g, "$1").replace(/[,;]\s*(?=[,;]|$)/g, "").replace(/[,;]?\s*\band\s*$/i, "").replace(/\s{2,}/g, " ").replace(/^[\s,;]+|[\s,;]+$/g, "");
+	errors.push(...checkLimits(limits));
+	return { limits, rest, errors, matched };
+}
+
 export function parseCommandArgs(args: string): { mode: WalkthroughMode; scope: string } | undefined {
 	let mode: WalkthroughMode = "verification";
 	let invalid = false;
@@ -510,6 +583,8 @@ function validateShape(value: unknown, schema: any, path = "payload"): void {
 	} else if (schema.type === "array") {
 		if (!Array.isArray(value)) throw new Error(`${path}: expected array`);
 		value.forEach((v, i) => validateShape(v, schema.items, `${path}[${i}]`));
+	} else if (schema.type === "integer") {
+		if (typeof value !== "number" || !Number.isInteger(value)) throw new Error(`${path}: expected integer`);
 	} else if (schema.type && (typeof value !== schema.type || (schema.type === "number" && !Number.isFinite(value)))) throw new Error(`${path}: expected ${schema.type}`);
 	if (typeof value === "number" && ((schema.minimum !== undefined && value < schema.minimum) || (schema.maximum !== undefined && value > schema.maximum))) throw new Error(`${path}: out of range`);
 }
@@ -526,24 +601,52 @@ export default function walkthrough(pi: ExtensionAPI) {
 	let draft: Record<string, unknown> = {};
 	let nextNum = 1;
 
-	const maxRecords = () => envInt("WALKTHROUGH_MAX_RECORDS", 20);
-	const budgetMs = () => envInt("WALKTHROUGH_BUDGET_S", 300) * 1000;
+	// Limits for the current walkthrough, fixed when it starts: per-run options, then the session
+	// default, then environment variables, then built-in defaults. The walkthrough cannot change them.
+	let sessionLimits: Limits = {};
+	let runLimits: Limits = {};
+	let limitSource = "";
+	const resolved = () => ({
+		records: runLimits.records ?? sessionLimits.records ?? envInt("WALKTHROUGH_MAX_RECORDS", DEFAULT_LIMITS.records),
+		time_s: runLimits.time_s ?? sessionLimits.time_s ?? envInt("WALKTHROUGH_BUDGET_S", DEFAULT_LIMITS.time_s),
+	});
+	const sourceOf = (key: keyof Limits) => runLimits[key] !== undefined ? "this run" : sessionLimits[key] !== undefined ? "session default" : process.env[key === "records" ? "WALKTHROUGH_MAX_RECORDS" : "WALKTHROUGH_BUDGET_S"] ? "environment" : "built-in default";
+	const describeLimits = () => { const r = resolved(); return `${r.records} commands (${sourceOf("records")}), ${formatDuration(r.time_s)} total (${sourceOf("time_s")})`; };
+	// The session budget, as the next walkthrough without per-run options would use it.
+	const describeSession = () => { const run = runLimits; runLimits = {}; try { return describeLimits(); } finally { runLimits = run; } };
+	const maxRecords = () => resolved().records;
+	const budgetMs = () => resolved().time_s * 1000;
 
 	// Restricting at session start would also strip the tools from every ordinary session once the
 	// package is installed, so the allowlist applies from the moment a walkthrough starts.
+	let savedTools: string[] | undefined;
 	const restrict = () => {
 		if (restricted) return;
 		restricted = true;
+		try { savedTools = pi.getActiveTools?.(); } catch { savedTools = undefined; }
 		pi.setActiveTools(ALLOWED_TOOLS);
+	};
+	// Give the session back the tools it had before the walkthrough. Called once the page is
+	// written and the agent has settled, or when a new session or walkthrough begins.
+	let finished = false;
+	const unrestrict = () => {
+		if (!restricted) return;
+		restricted = false;
+		finished = false;
+		if (savedTools?.length) pi.setActiveTools(savedTools);
+		savedTools = undefined;
 	};
 
 	const reset = () => {
+		unrestrict();
 		log = [];
 		firstStart = 0;
 		fileStarted = false;
 		restricted = false;
 		draft = {};
 		nextNum = 1;
+		runLimits = {};
+		limitSource = "";
 	};
 
 	const writeLogFile = (cwd: string) => {
@@ -584,7 +687,46 @@ export default function walkthrough(pi: ExtensionAPI) {
 		appendFileSync(file, `${JSON.stringify(rec)}\n`);
 	};
 
-	pi.on("session_start", () => reset());
+	// The session default is stored in the session file, so it survives resume and reload.
+	pi.on("session_start", (_event, ctx) => {
+		reset();
+		savedTools = undefined;
+		sessionLimits = {};
+		try {
+			for (const e of ctx?.sessionManager?.getEntries?.() ?? []) {
+				if (e.type === "custom" && (e as { customType?: string }).customType === LIMITS_ENTRY) sessionLimits = { ...((e as { data?: Limits }).data ?? {}) };
+			}
+		} catch { /* a session without entries keeps the defaults */ }
+	});
+
+	// After the page is written and the agent has stopped, return the session's tools. An aborted
+	// walkthrough keeps its restriction, since the user may continue it; /walkthrough or a new
+	// session restores them.
+	pi.on("agent_settled", () => { if (finished) unrestrict(); });
+
+	const saveSessionLimits = (next: Limits) => {
+		sessionLimits = next;
+		pi.appendEntry(LIMITS_ENTRY, next);
+	};
+
+	// The prompt that starts a walkthrough, shared by /walkthrough and walkthrough_start.
+	const startWalkthrough = (scope: string, mode: WalkthroughMode, limits: Limits): string => {
+		reset();
+		runLimits = limits;
+		limitSource = describeLimits();
+		restrict();
+		let body = "";
+		try {
+			body = readFileSync(SKILL_FILE, "utf8").replace(/^---\n[\s\S]*?\n---\n/, "").trim();
+		} catch {
+			/* fall back to naming the skill */
+		}
+		const text = body
+			? `<skill name="walkthrough" location="${SKILL_FILE}">\n${body}\n</skill>\n\nWrite a walkthrough of: ${scope}`
+			: `Use the walkthrough skill to write a walkthrough of: ${scope}`;
+		const r = resolved();
+		return `${text}\n\nMode: ${mode}. ${mode === "verification" ? "Report observed checks; exit zero alone is not a scientific or test pass." : "Explain code and reasoning from recorded source inspection; inspection is not runtime verification. Tests and visuals are optional."} Budget for this walkthrough: ${r.records} commands and ${formatDuration(r.time_s)} in total, ${MAX_TIMEOUT_S} s at most per command. Both modes are report-only and use only walkthrough_record and walkthrough_write. Use the current structured report contract: title, mode, scope {label, head, base?, include_working_tree?}, summary, sections [{id, title, text, evidence?: [{record_id, summary, quote?}]}], with optional checks, limits, changes and visuals arrays. Do not use the obsolete seven-section payload.`;
+	};
 
 
 	pi.registerTool({
@@ -593,7 +735,7 @@ export default function walkthrough(pi: ExtensionAPI) {
 		description:
 			"Run one shell command for the walkthrough and record the command and its real output in the evidence log. " +
 			"During a walkthrough this is the only way to run anything, including reading files (git show, sed -n, grep). " +
-			`Budget: ${maxRecords()} commands, 60 s each by default, 5 minutes in total; calls past the budget are refused and listed under Not verified. ` +
+			"The walkthrough prompt states its budget of commands and total time; each command defaults to 60 s. Calls past the budget are refused and listed under limits. " +
 			`Set produces to the .png/.svg file(s) the command writes under ${FIG_DIR}/ to use them as figures; the result includes a PNG preview. ` +
 			"Commands see $WALKTHROUGH_FIGKIT, the bundled diagram library: run a figure script with \"$WALKTHROUGH_FIGKIT/run.sh\" script.py.",
 		promptSnippet: "walkthrough_record: run a command and record its output as walkthrough evidence",
@@ -892,6 +1034,7 @@ export default function walkthrough(pi: ExtensionAPI) {
 				dirty: top ? (porcelain ?? "") !== "" : undefined,
 				date: new Date().toISOString().slice(0, 16).replace("T", " "),
 				model: ctx.model ? `${ctx.model.provider}/${ctx.model.id}` : undefined,
+				limits: limitSource || describeLimits(),
 				cwd,
 			};
 			const html = renderPage(p, log, meta, { scope, visuals, autoLimits, tree, fileUrls, references });
@@ -899,6 +1042,7 @@ export default function walkthrough(pi: ExtensionAPI) {
 			mkdirSync(dir, { recursive: true });
 			const file = join(dir, `${slugify(p.title)}.html`);
 			writeFileSync(file, html);
+			finished = true;
 			return {
 				content: [
 					{
@@ -911,27 +1055,105 @@ export default function walkthrough(pi: ExtensionAPI) {
 		},
 	});
 
-	pi.registerCommand("walkthrough", {
-		description: "Write a report-only article: /walkthrough [--mode=verification|explanation] <scope>",
+	pi.registerCommand("walkthrough-limits", {
+		description: "Show or set this session's walkthrough budget: /walkthrough-limits [records=40] [time=15m] | reset",
 		handler: async (args, ctx) => {
-			const parsed = parseCommandArgs(args);
+			const a = args.trim();
+			if (a === "reset") {
+				saveSessionLimits({});
+				ctx.ui?.notify(`Session walkthrough budget reset: ${describeSession()}.`, "info");
+				return;
+			}
+			if (a) {
+				const next: Limits = { ...sessionLimits };
+				const errors: string[] = [];
+				for (const part of a.split(/[\s,]+/).filter(Boolean)) {
+					const m = /^(records|commands|time)=(.+)$/.exec(part);
+					if (!m) { errors.push(`"${part}" is not records=N or time=DURATION`); continue; }
+					if (m[1] === "time") { const d = parseDuration(m[2]); if (d === undefined) errors.push(`"${m[2]}" is not a duration`); else next.time_s = d; }
+					else if (/^\d+$/.test(m[2])) next.records = Number(m[2]);
+					else errors.push(`"${m[2]}" is not a whole number`);
+				}
+				errors.push(...checkLimits(next));
+				if (errors.length) { ctx.ui?.notify(`Not changed: ${errors.join("; ")}.`, "error"); return; }
+				saveSessionLimits(next);
+			}
+			ctx.ui?.notify(`Walkthrough budget for this session: ${describeSession()}.`, "info");
+		},
+	});
+
+	// Natural-language entry points for the ordinary session agent. Both are inactive during a
+	// walkthrough (the active set is then exactly ALLOWED_TOOLS), so a walkthrough cannot raise its own budget.
+	const LimitFields = {
+		records: Type.Optional(Type.Integer({ minimum: LIMIT_RANGE.records[0], maximum: LIMIT_RANGE.records[1], description: "Maximum recorded commands, only if the user stated one." })),
+		time_s: Type.Optional(Type.Integer({ minimum: LIMIT_RANGE.time_s[0], maximum: LIMIT_RANGE.time_s[1], description: "Total time budget in seconds, only if the user stated one (15 minutes = 900)." })),
+	};
+	const StartParams = Type.Object({
+		scope: Type.String({ description: "What to walk through, in the user's words: a commit, range, or code question." }),
+		mode: Type.Optional(StringEnum(["verification", "explanation"], { description: "verification runs checks (default); explanation teaches the code." })),
+		...LimitFields,
+		save_for_session: Type.Optional(Type.Boolean({ description: "True when the user asked for these limits for the rest of the session." })),
+	});
+	pi.registerTool({
+		name: "walkthrough_start",
+		label: "Start walkthrough",
+		description: "Start a walkthrough when the user asks for one in plain language, for example \"walk me through the last commit, take 15 minutes and up to 40 commands\". " +
+			"Pass the scope in the user's words and only the limits the user stated; do not invent limits. The result contains the walkthrough instructions; follow them.",
+		promptSnippet: "walkthrough_start: start a report-only walkthrough of a commit or code question",
+		parameters: StartParams,
+		executionMode: "sequential",
+		async execute(_id, params, _signal, _onUpdate, ctx) {
+			validateShape(params, StartParams, "walkthrough_start");
+			if (restricted) throw new Error("A walkthrough is already running; its budget cannot be changed.");
+			const limits: Limits = { ...(params.records !== undefined ? { records: params.records } : {}), ...(params.time_s !== undefined ? { time_s: params.time_s } : {}) };
+			const errors = checkLimits(limits);
+			if (errors.length) throw new Error(`walkthrough_start rejected: ${errors.join("; ")}`);
+			if (params.save_for_session) saveSessionLimits({ ...sessionLimits, ...limits });
+			const prompt = startWalkthrough(params.scope, params.mode ?? "verification", params.save_for_session ? {} : limits);
+			ctx?.ui?.notify?.(`Walkthrough budget: ${limitSource}.`, "info");
+			return { content: [{ type: "text" as const, text: prompt }], details: { limits: resolved(), source: limitSource } };
+		},
+	});
+
+	const LimitsParams = Type.Object({ ...LimitFields, reset: Type.Optional(Type.Boolean({ description: "Return to the defaults." })) });
+	pi.registerTool({
+		name: "walkthrough_limits",
+		label: "Walkthrough limits",
+		description: "Show or set the walkthrough budget for the rest of this session when the user asks, for example \"give walkthroughs 30 minutes from now on\". " +
+			"Call with no arguments to report the current budget. Pass only what the user stated.",
+		promptSnippet: "walkthrough_limits: show or set this session's walkthrough budget",
+		parameters: LimitsParams,
+		executionMode: "sequential",
+		async execute(_id, params) {
+			validateShape(params, LimitsParams, "walkthrough_limits");
+			if (restricted) throw new Error("A walkthrough is running; its budget cannot be changed.");
+			if (params.reset) saveSessionLimits({});
+			else if (params.records !== undefined || params.time_s !== undefined) {
+				const next: Limits = { ...sessionLimits, ...(params.records !== undefined ? { records: params.records } : {}), ...(params.time_s !== undefined ? { time_s: params.time_s } : {}) };
+				const errors = checkLimits(next);
+				if (errors.length) throw new Error(`walkthrough_limits rejected: ${errors.join("; ")}`);
+				saveSessionLimits(next);
+			}
+			return { content: [{ type: "text" as const, text: `Walkthrough budget for this session: ${describeSession()}.` }], details: { session: sessionLimits } };
+		},
+	});
+
+	pi.registerCommand("walkthrough", {
+		description: "Write a report-only article: /walkthrough [--mode=verification|explanation] [--records=N] [--time=15m] <scope>",
+		handler: async (args, ctx) => {
+			const extracted = extractLimits(args);
+			if (extracted.errors.length) {
+				ctx.ui?.notify(`Walkthrough not started: ${extracted.errors.join("; ")}.`, "error");
+				return;
+			}
+			const parsed = parseCommandArgs(extracted.rest);
 			if (!parsed) {
 				ctx.ui?.notify("Invalid walkthrough mode. Use verification or explanation.", "error");
 				return;
 			}
-			reset();
-			const { scope, mode } = parsed;
-			restrict();
-			let body = "";
-			try {
-				body = readFileSync(SKILL_FILE, "utf8").replace(/^---\n[\s\S]*?\n---\n/, "").trim();
-			} catch {
-				/* fall back to naming the skill */
-			}
-			const text = body
-				? `<skill name="walkthrough" location="${SKILL_FILE}">\n${body}\n</skill>\n\nWrite a walkthrough of: ${scope}`
-				: `Use the walkthrough skill to write a walkthrough of: ${scope}`;
-			pi.sendUserMessage(`${text}\n\nMode: ${mode}. ${mode === "verification" ? "Report observed checks; exit zero alone is not a scientific or test pass." : "Explain code and reasoning from recorded source inspection; inspection is not runtime verification. Tests and visuals are optional."} Both modes are report-only and use only walkthrough_record and walkthrough_write. Use the current structured report contract: title, mode, scope {label, head, base?, include_working_tree?}, summary, sections [{id, title, text, evidence?: [{record_id, summary, quote?}]}], with optional checks, limits, changes and visuals arrays. Do not use the obsolete seven-section payload.`);
+			const prompt = startWalkthrough(parsed.scope, parsed.mode, extracted.limits);
+			if (extracted.matched.length) ctx.ui?.notify(`Walkthrough budget: ${limitSource}. Read from: ${extracted.matched.map((m) => `"${m}"`).join(", ")}.`, "info");
+			pi.sendUserMessage(prompt);
 			// Print and JSON modes exit when the command returns; keep it alive until the turn ends.
 			if (!ctx.hasUI) {
 				for (let i = 0; i < 100 && ctx.isIdle(); i++) await new Promise((r) => setTimeout(r, 50));

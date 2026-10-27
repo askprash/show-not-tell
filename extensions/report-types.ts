@@ -152,6 +152,8 @@ export interface PageMeta {
   dirty: boolean | undefined;
   date: string;
   model?: string;
+  /** Command and time budget the walkthrough ran under, with where each came from. */
+  limits?: string;
   cwd: string;
 }
 

@@ -22,19 +22,23 @@ registerHooks({
 	},
 });
 
-const { default: walkthrough, prepareWriteArgs, parseCommandArgs, repositoryUrl, resolveScope, writesWalkthroughDir, ALLOWED_TOOLS, FIGKIT_DIR } = await import("../extensions/walkthrough.ts");
+const { default: walkthrough, prepareWriteArgs, parseCommandArgs, extractLimits, parseDuration, repositoryUrl, resolveScope, writesWalkthroughDir, ALLOWED_TOOLS, FIGKIT_DIR } = await import("../extensions/walkthrough.ts");
 
 const tools = new Map();
 const handlers = new Map();
 const commands = new Map();
 const activeToolCalls = [];
 const sent = [];
+const entries = [];
+let activeTools = ["read", "bash", "edit", "write"];
 const pi = {
 	registerTool: (t) => tools.set(t.name, t),
 	registerCommand: (name, c) => commands.set(name, c),
 	on: (ev, fn) => handlers.set(ev, fn),
 	sendUserMessage: (m) => sent.push(m),
-	setActiveTools: (names) => activeToolCalls.push(names),
+	getActiveTools: () => [...activeTools],
+	setActiveTools: (names) => { activeToolCalls.push(names); activeTools = [...names]; },
+	appendEntry: (customType, data) => entries.push({ type: "custom", customType, data }),
 };
 walkthrough(pi);
 
@@ -470,3 +474,106 @@ test("elapsed budgets, process-group timeout cleanup and at_ref option rejection
 		rmSync(cwd, { recursive: true, force: true }); cwd = saved;
 	}
 });
+
+test("budget limits: flags, plain phrases, session defaults, and the record cap they set", async () => {
+	for (const [args, limits, rest] of [
+		["--records=40 --time=15m the last commit", { records: 40, time_s: 900 }, "the last commit"],
+		["the last commit, use up to 40 commands and take 15 minutes", { records: 40, time_s: 900 }, "the last commit"],
+		["HEAD with a 10-minute budget", { time_s: 600 }, "HEAD"],
+		["--mode=explanation HEAD~3..HEAD within 1h30m", { time_s: 5400 }, "--mode=explanation HEAD~3..HEAD"],
+		["HEAD in 2 hours, at most 60 steps", { records: 60, time_s: 7200 }, "HEAD"],
+		["explain the 5 minute timeout change", {}, "explain the 5 minute timeout change"],
+		["the last 3 commits", {}, "the last 3 commits"],
+	]) {
+		const r = extractLimits(args);
+		assert.deepEqual(r.limits, limits, args);
+		assert.equal(r.rest, rest, args);
+		assert.deepEqual(r.errors, [], args);
+	}
+	assert.match(extractLimits("--records=500 HEAD").errors.join(), /from 1 to 200/);
+	assert.match(extractLimits("--time=soon HEAD").errors.join(), /needs a duration/);
+	assert.match(extractLimits("--time=5s HEAD").errors.join(), /from 30 s/);
+	assert.deepEqual(["15m", "15 min", "1h30m", "1.5 hours", "900", "soon"].map(parseDuration), [900, 900, 5400, 5400, 900, undefined]);
+
+	const saved = cwd;
+	cwd = mkdtempSync(join(tmpdir(), "wt-limits-"));
+	const notes = [];
+	const ui = { ui: { notify: (m) => notes.push(m) }, hasUI: true };
+	try {
+		handlers.get("session_start")({ type: "session_start", reason: "new" }, { sessionManager: { getEntries: () => [] } });
+		const sentBefore = sent.length;
+		await commands.get("walkthrough").handler("--records=500 HEAD", ui);
+		assert.equal(sent.length, sentBefore, "invalid limits do not start a walkthrough");
+		assert.match(notes.at(-1), /records must be a whole number from 1 to 200/);
+
+		await commands.get("walkthrough").handler("HEAD, use up to 2 commands in 10 minutes", ui);
+		assert.match(sent.at(-1), /Budget for this walkthrough: 2 commands and 10 min in total/);
+		assert.match(sent.at(-1), /Write a walkthrough of: HEAD\n/);
+		assert.match(notes.at(-1), /2 commands \(this run\), 10 min total \(this run\).*"use up to 2 commands"/);
+		await record({ command: "true", why: "one" });
+		await record({ command: "true", why: "two" });
+		assert.equal((await record({ command: "true", why: "three" })).details.refused, "budget");
+
+		// Session default, kept in the session file and read back on resume.
+		await commands.get("walkthrough-limits").handler("records=3 time=20m", ui);
+		assert.match(notes.at(-1), /3 commands \(session default\), 20 min total \(session default\)/);
+		assert.deepEqual(entries.at(-1), { type: "custom", customType: "walkthrough-limits", data: { records: 3, time_s: 1200 } });
+		handlers.get("session_start")({ type: "session_start", reason: "resume" }, { sessionManager: { getEntries: () => [...entries] } });
+		await commands.get("walkthrough").handler("HEAD", ui);
+		assert.match(sent.at(-1), /Budget for this walkthrough: 3 commands and 20 min/);
+		// A per-run option overrides the session default for that run only.
+		await commands.get("walkthrough").handler("--records=5 HEAD", ui);
+		assert.match(sent.at(-1), /5 commands and 20 min/);
+		await commands.get("walkthrough").handler("HEAD", ui);
+		assert.match(sent.at(-1), /3 commands and 20 min/);
+		await commands.get("walkthrough-limits").handler("records=999", ui);
+		assert.match(notes.at(-1), /Not changed/);
+		await commands.get("walkthrough-limits").handler("reset", ui);
+		assert.match(notes.at(-1), /20 commands \((environment|built-in default)\)/);
+	} finally { rmSync(cwd, { recursive: true, force: true }); cwd = saved; process.env.WALKTHROUGH_MAX_RECORDS = "20"; }
+});
+
+test("natural language: walkthrough_start and walkthrough_limits are refused while a walkthrough runs", async () => {
+	const start = tools.get("walkthrough_start");
+	const limits = tools.get("walkthrough_limits");
+	handlers.get("session_start")({ type: "session_start", reason: "new" }, { sessionManager: { getEntries: () => [] } });
+	assert.ok(!ALLOWED_TOOLS.includes("walkthrough_start") && !ALLOWED_TOOLS.includes("walkthrough_limits"), "not available inside a walkthrough");
+	const res = await start.execute("t", { scope: "the last commit", mode: "explanation", records: 40, time_s: 900 }, undefined, undefined, ctx());
+	assert.match(res.content[0].text, /Write a walkthrough of: the last commit/);
+	assert.match(res.content[0].text, /Mode: explanation\. .*Budget for this walkthrough: 40 commands and 15 min/);
+	assert.deepEqual(activeTools, ALLOWED_TOOLS);
+	await assert.rejects(start.execute("t", { scope: "HEAD", records: 100 }, undefined, undefined, ctx()), /already running/);
+	await assert.rejects(limits.execute("t", { records: 100 }), /cannot be changed/);
+	handlers.get("session_start")({ type: "session_start", reason: "new" }, { sessionManager: { getEntries: () => [] } });
+	await assert.rejects(start.execute("t", { scope: "HEAD", records: 999 }, undefined, undefined, ctx()), /expected|out of range|from 1 to 200/);
+	const set = await limits.execute("t", { time_s: 1800 });
+	assert.match(set.content[0].text, /30 min total \(session default\)/);
+	const saved = await start.execute("t", { scope: "HEAD", records: 25, save_for_session: true }, undefined, undefined, ctx());
+	assert.match(saved.content[0].text, /25 commands and 30 min/);
+	assert.deepEqual(entries.at(-1).data, { records: 25, time_s: 1800 });
+	handlers.get("session_start")({ type: "session_start", reason: "new" }, { sessionManager: { getEntries: () => [] } });
+});
+
+test("the session gets its own tools back once the page is written", async () => {
+	const saved = cwd;
+	cwd = mkdtempSync(join(tmpdir(), "wt-restore-"));
+	try {
+		handlers.get("session_start")({ type: "session_start", reason: "new" }, { sessionManager: { getEntries: () => [] } });
+		activeTools = ["read", "bash", "edit", "write", "walkthrough_start"];
+		await commands.get("walkthrough").handler("HEAD", { hasUI: true });
+		assert.deepEqual(activeTools, ALLOWED_TOOLS);
+		await record({ command: "echo hi", why: "basic" });
+		handlers.get("agent_settled")({ type: "agent_settled", aborted: true });
+		assert.deepEqual(activeTools, ALLOWED_TOOLS, "an aborted, unfinished walkthrough stays restricted");
+		await write(payload("r1"));
+		assert.deepEqual(activeTools, ALLOWED_TOOLS, "tools stay restricted until the agent settles");
+		handlers.get("agent_settled")({ type: "agent_settled", aborted: false });
+		assert.deepEqual(activeTools, ["read", "bash", "edit", "write", "walkthrough_start"]);
+		// An unfinished walkthrough is released by the next /walkthrough or a new session.
+		await commands.get("walkthrough").handler("HEAD", { hasUI: true });
+		handlers.get("session_start")({ type: "session_start", reason: "new" }, { sessionManager: { getEntries: () => [] } });
+		assert.deepEqual(activeTools, ["read", "bash", "edit", "write", "walkthrough_start"]);
+		assert.match(rendered().meta.limits, /20 commands .*5 min total/);
+	} finally { rmSync(cwd, { recursive: true, force: true }); cwd = saved; }
+});
+
