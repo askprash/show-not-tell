@@ -32,7 +32,7 @@ test('R8 multiline command is exact, once, only within the expandable record bod
   f.extras.visuals.push({ record_id: 'R8', kind: 'plot', caption: 'The recorded bound stays below tolerance.', src: 'data:image/png;base64,aGVsbG8=' });
   const html = render(f);
   assert.equal(html.split(escape(command)).length - 1, 1);
-  assert.ok(html.includes(`<h4>Exact command</h4><pre><code>${escape(command)}</code></pre>`));
+  assert.ok(html.includes(`<h4 class="with-tool">Exact command <button type="button" class="copy" data-copy="cmd-R8">Copy</button></h4><pre id="cmd-R8"><code>${escape(command)}</code></pre>`));
   assert.ok(!summaries(html).includes('python3'));
   assert.match(summaries(html), /Check the stopping bound/);
   assert.match(summaries(html), /exit 0/);
@@ -330,4 +330,45 @@ test('review regressions: literal [[id]] in code is not a citation; outline fail
   const f = fixture();
   f.log[0].figures = [{ path: '.walkthrough/figs/R8-x.svg', sha256: 'a'.repeat(64), bytes: 10, lint: [], outline_failed: 'rsvg-convert: not found' }];
   assert.match(render(f), /<span class="warning">Text outlining failed: rsvg-convert: not found<\/span>/);
+});
+
+test('diff output is shaded line by line without changing its text; non-diffs are left alone', async () => {
+  const { isDiff } = await import('../extensions/report.ts');
+  const diff = 'diff --git a/x.jl b/x.jl\n--- a/x.jl\n+++ b/x.jl\n@@ -1,3 +1,3 @@\n context <b>\n-old line\n+new line\n';
+  const f = fixture();
+  f.log[0].stdout = diff;
+  const html = render(f);
+  assert.match(html, /<pre class="diff"><code>/);
+  assert.match(html, /<span class="d-del">-old line\n<\/span><span class="d-add">\+new line\n<\/span>/);
+  assert.match(html, /<span class="d-hunk">@@ -1,3 \+1,3 @@\n<\/span>/);
+  assert.match(html, /<span class="d-file">diff --git a\/x.jl b\/x.jl\n<\/span>/);
+  assert.match(html, / context &lt;b&gt;\n/);
+  assert.match(html, /<span class="d-add">\+1 added<\/span> <span class="d-del">\u22121 removed<\/span>/);
+  // Text content of the shaded block is byte-for-byte the recorded output.
+  const block = html.match(/<pre class="diff"><code>([\s\S]*?)<\/code><\/pre>/)[1];
+  assert.equal(decode(block.replace(/<[^>]+>/g, '')), diff);
+  // Colors avoid green: additions blue, deletions vermilion.
+  assert.match(html, /\.d-add\{background:#dcebf9/);
+  assert.match(html, /\.d-del\{background:#fbe1d7/);
+  // grep -n over a diff, and grep-filtered +/- lines, are diffs; bullets and diffstats are not.
+  assert.equal(isDiff('224--   old\n225-+   new\n226-    ctx'), true);
+  assert.equal(isDiff('-  a = 1\n+  a = 2\n-  b = 1\n+  b = 2'), true);
+  assert.equal(isDiff('- item one\n- item two\n- item three'), false);
+  assert.equal(isDiff(' src/a.jl | 12 ++--\n 1 file changed, 2 insertions(+), 2 deletions(-)'), false);
+  assert.equal(isDiff('header\n----\nbody'), false);
+  // Evidence quotes of diff lines are shaded too.
+  f.payload.sections[0].evidence[0].quote = '-old line\n+new line';
+  assert.match(render(f), /<blockquote><pre class="diff">/);
+});
+
+test('reading aids: contents list for longer pages, expand/collapse and copy controls', () => {
+  const f = fixture();
+  assert.doesNotMatch(render(f), /class="toc"/, 'one section needs no contents list');
+  f.payload.sections = ['one', 'two', 'three'].map((id) => ({ id, title: `Section $${id}$`, text: 'Text.' }));
+  const html = render(f);
+  assert.match(html, /<nav class="toc" aria-label="Contents"><p>Contents<\/p><ol><li><a href="#one">Section <span class="katex">/);
+  assert.match(html, /<li><a href="#checks">Checks<\/a><\/li><li><a href="#log">Exact command log<\/a><\/li><\/ol><\/nav>/);
+  assert.match(html, /<button type="button" data-records="open">Expand all<\/button><button type="button" data-records="close">Collapse all<\/button>/);
+  assert.match(html, /data-copy="cmd-R8"/);
+  assert.equal((html.match(/<script>/g) ?? []).length, 1);
 });

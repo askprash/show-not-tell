@@ -365,7 +365,7 @@ test("prose readability: bare identifiers, walls of text, and declared reference
 		for (const [text, err] of [
 			["ADR-0028 chose this.", /bare identifier "ADR-0028"/],
 			["See PC-32 and ADR008.", /"PC-32", "ADR008"/],
-			[`Commit ${head.slice(0, 7)} did it.`, /bare identifier/],
+			["Commit 3f2a9c1 did it.", /bare identifier "3f2a9c1"/],
 			[Array(70).fill("word").join(" "), /paragraph 1 has 70 words/],
 			["It does three things: (1) one, (2) two, (3) three.", /numbered list/],
 			[`- ${Array(45).fill("x").join(" ")}`, /list item has 45 words/],
