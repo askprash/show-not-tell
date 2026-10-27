@@ -577,3 +577,15 @@ test("the session gets its own tools back once the page is written", async () =>
 	} finally { rmSync(cwd, { recursive: true, force: true }); cwd = saved; }
 });
 
+test("a tight budget without any diagram yet reminds the author to draw one", async () => {
+	const saved = cwd;
+	cwd = mkdtempSync(join(tmpdir(), "wt-nudge-"));
+	try {
+		handlers.get("session_start")({ type: "session_start", reason: "new" }, { sessionManager: { getEntries: () => [] } });
+		await commands.get("walkthrough").handler("--records=6 HEAD", { hasUI: true });
+		assert.match(sent.at(-1), /Reserve part of it for diagrams before you start/);
+		assert.doesNotMatch((await record({ command: "true", why: "one" })).content[0].text, /No diagram has been drawn yet/);
+		await record({ command: "true", why: "two" });
+		assert.match((await record({ command: "true", why: "three" })).content[0].text, /No diagram has been drawn yet/);
+	} finally { rmSync(cwd, { recursive: true, force: true }); cwd = saved; }
+});

@@ -29,6 +29,7 @@ The default budget is 20 commands and 5 minutes, with 60 seconds per command (12
 
 ## Build an explanation, not a transcript
 
+0. **Plan the figures first.** Before running anything, decide which one to three diagrams the reader needs, such as the data flow, the before-and-after structure, or the control path. Reserve their budget: about 2 records and 1 minute per diagram, plus 1 record to check figkit. Spend the rest on reading and checks.
 1. Inspect the scope and core code. Read only what is needed to understand the change.
 2. Explain the bottom line in a short paragraph. Give unfamiliar terms a short definition when needed.
 3. Choose a few sections with descriptive headings. Follow the code's data flow, the scientific argument, or the result the reader cares about. Tie each observation to its recorded source.
@@ -66,13 +67,34 @@ Prose fields accept a small Markdown subset. Use it, because the reader sees ren
 
 No other links, images or raw HTML in prose. Cite records through evidence.
 
-## Use visuals when they explain something
+## Draw the figures: they are part of the explanation
 
-A reader takes in a small diagram faster than a paragraph. Whenever a section describes a sequence, a decision, a fallback chain, a data flow, or a before/after change in structure, draw a diagram. Most code explanations need at least one. A plot can explain numerical behavior. A compact table may be better than another plot. Do not add decoration or a file-churn chart.
+**Diagrams are a priority, not an extra.** A reader takes in a small flowchart faster than a paragraph, and the person reading this page was not there. Whenever a section describes a sequence, a decision, a fallback chain, a data flow, or a before-and-after change in structure, draw a diagram. Almost every code explanation needs at least one.
+
+- **Do not trade a relevant diagram for another check or another file read.** If the budget gets tight, cut a lower-value command, not the diagram. A verification check you cannot finish is a limit; a missing diagram makes the whole page harder to read.
+- **A figure costs about one record and under a minute.** XeLaTeX typesets a few labels in seconds, and math is cached. The figkit API is below, so you do not need to read its README first.
+- **A table is not a substitute for a flowchart.** Use a table for numbers and comparisons, and a diagram for structure and flow. If you skip a relevant diagram anyway, say so under limits, naming the diagram and the reason.
+
+A plot can explain numerical behavior. Do not add decoration or a file-churn chart.
 
 ### Diagrams with figkit
 
-The package bundles figkit, a figure library with measured text, LaTeX math and a lint check. Commands see its location as `$WALKTHROUGH_FIGKIT`. Read `$WALKTHROUGH_FIGKIT/README.md` once, through a recorded command, before your first figure. Then, for each diagram:
+The package bundles figkit, a figure library with measured text, LaTeX math and a lint check. Commands see its location as `$WALKTHROUGH_FIGKIT`. Check the environment once with `"$WALKTHROUGH_FIGKIT/scripts/check-env.sh"`, preferably in the same record as your first figure. The API:
+
+| Call | Result |
+|---|---|
+| `f = Figure()` | Report-column canvas, 800 px wide, height fitted to content. y is a baseline for text, a top edge for boxes. |
+| `f.node(x, y, rows, cat=0, w=, align="middle")` | Box sized to its rows. Row 0 is a heading in the color of `cat` (0-3). Returns a `Node` with `.l .r .t .b` edge midpoints and `.x .y .x1 .y1 .cx .cy .w .h`. |
+| `f.size(rows, cat)` | `(w, h)` of that node without drawing it. Use it to give a column one width. |
+| `f.arrow(a.b, b.t)` | Straight arrow between edge points. |
+| `f.connector([p0, p1, p2, ...], color="cat2")` | Arrow with right-angle turns. |
+| `f.tag(x, y, "yes")` | Label centered on a connector. |
+| `f.text(x, y, s, "heading", "ink")` | One line of text; `$...$` is math. |
+| `f.save(".walkthrough/figs/<name>.svg")` | Writes the SVG and prints lint findings. |
+
+Styles: `heading`, `label`, `small`, `code`. Colors: `ink`, `ink2`, `muted`, `emph`, `cat0`-`cat3`. For a worked example, read `$WALKTHROUGH_FIGKIT/README.md`.
+
+For each diagram:
 
 1. In one recorded command, write the script to `.walkthrough/figs/<name>.py` with a heredoc and run it with `"$WALKTHROUGH_FIGKIT/run.sh" .walkthrough/figs/<name>.py`. Pass `produces: ".walkthrough/figs/<name>.svg"`. The script begins `from svgfig import Figure` and calls `f = Figure()`, the report-column target: 800 px wide, with the height fitted to the content.
 2. The tool lints the captured SVG and returns its findings and a PNG preview. Fix every finding. Then look at the preview for what the lint cannot see: crossing or ambiguous arrows, uneven alignment, wasted space, text too long for its box. Record the script again until it is clean. A diagram with lint findings cannot be embedded.
@@ -81,7 +103,7 @@ The package bundles figkit, a figure library with measured text, LaTeX math and 
 
 Write box text as short labels: a few common words, with math in `$...$` (`$M_8 = 1$`, `$P_0$`). Show identifiers in the `code` style. Do not repeat the paragraph inside the figure.
 
-If `"$WALKTHROUGH_FIGKIT/scripts/check-env.sh"` fails (missing XeLaTeX, rsvg-convert, uv or fonts), report that under limits and use a pipe table or a list in place of the diagram. Do not hand-write SVG.
+Only if `"$WALKTHROUGH_FIGKIT/scripts/check-env.sh"` fails (missing XeLaTeX, rsvg-convert, uv or fonts) may you replace a diagram with a numbered list or table. Report the failure under limits. Do not hand-write SVG.
 
 ### Plots
 

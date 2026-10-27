@@ -725,7 +725,7 @@ export default function walkthrough(pi: ExtensionAPI) {
 			? `<skill name="walkthrough" location="${SKILL_FILE}">\n${body}\n</skill>\n\nWrite a walkthrough of: ${scope}`
 			: `Use the walkthrough skill to write a walkthrough of: ${scope}`;
 		const r = resolved();
-		return `${text}\n\nMode: ${mode}. ${mode === "verification" ? "Report observed checks; exit zero alone is not a scientific or test pass." : "Explain code and reasoning from recorded source inspection; inspection is not runtime verification. Tests and visuals are optional."} Budget for this walkthrough: ${r.records} commands and ${formatDuration(r.time_s)} in total, ${MAX_TIMEOUT_S} s at most per command. Both modes are report-only and use only walkthrough_record and walkthrough_write. Use the current structured report contract: title, mode, scope {label, head, base?, include_working_tree?}, summary, sections [{id, title, text, evidence?: [{record_id, summary, quote?}]}], with optional checks, limits, changes and visuals arrays. Do not use the obsolete seven-section payload.`;
+		return `${text}\n\nMode: ${mode}. ${mode === "verification" ? "Report observed checks; exit zero alone is not a scientific or test pass." : "Explain code and reasoning from recorded source inspection; inspection is not runtime verification. Tests and visuals are optional."} Budget for this walkthrough: ${r.records} commands and ${formatDuration(r.time_s)} in total, ${MAX_TIMEOUT_S} s at most per command. Reserve part of it for diagrams before you start: about 2 commands and 1 minute for each relevant diagram. Diagrams are a priority; cut a lower-value command before a diagram. Both modes are report-only and use only walkthrough_record and walkthrough_write. Use the current structured report contract: title, mode, scope {label, head, base?, include_working_tree?}, summary, sections [{id, title, text, evidence?: [{record_id, summary, quote?}]}], with optional checks, limits, changes and visuals arrays. Do not use the obsolete seven-section payload.`;
 	};
 
 
@@ -844,7 +844,9 @@ export default function walkthrough(pi: ExtensionAPI) {
 				} catch { return []; }
 			});
 			const timeLeft = Math.max(0, Math.floor((budgetMs() - (Date.now() - firstStart)) / 1000));
-			return { content: [{ type: "text" as const, text: text.replace("budget left: BUDGET", `budget left: ${left} records, ${timeLeft} s`) }, ...previews], details: rec };
+			const anyFigure = log.some((r) => r.figures?.length);
+			const nudge = !anyFigure && (left <= 4 || timeLeft <= 90) ? "\nNo diagram has been drawn yet. If a diagram would help the reader, draw it now with the remaining budget: diagrams take priority over further checks.\n" : "";
+			return { content: [{ type: "text" as const, text: text.replace("budget left: BUDGET", `budget left: ${left} records, ${timeLeft} s${nudge}`) }, ...previews], details: rec };
 		},
 	});
 
