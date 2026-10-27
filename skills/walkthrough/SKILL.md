@@ -35,6 +35,16 @@ The default budget is 20 commands and 5 minutes, with 60 seconds per command (12
 4. In verification mode, run checks that address the claim. A parent-version run with an overlaid new test is useful when showing a regression fix. Do not require it for coverage of behavior that was already correct. An environment failure is blocked verification, not evidence that the old code is wrong.
 5. State material limits next to the result or under Limits. Separate measurements made here from values read from committed files. State what a test asserts, not just that it passed.
 
+## Format prose for reading
+
+Prose fields (summary, section text, evidence summaries, captions, checks, limits) accept a small Markdown subset. Use it, because the reader sees rendered output, not source:
+
+- **Math in LaTeX**, rendered by KaTeX: `$M_8 = 1$` inline, and `$$ ... $$` on its own lines for a display equation. Write symbols with subscripts and Greek letters in LaTeX (`$P_0$`, `$\pi^*$`, `$\sqrt{a^2+b^2}$`), not Unicode look-alikes such as "P₀" or "√". Escape a literal dollar sign as `\$`.
+- **Pipe tables** for comparisons such as before/after counts, stage-by-stage behavior, or parameter choices. Separator row `|---|---|`; end a column with `:` to right-align numbers.
+- Bullet or numbered lists for parallel items, `` `code` `` for identifiers, `**bold**` for the one thing a reader must not miss.
+
+No links, images or raw HTML in prose. Cite records through evidence instead.
+
 Write full sentences for explanations. Short fragments are fine for labels and table cells. Prefer precise verbs to confidence slogans. Remove repeated detail rather than compressing an explanation into unexplained jargon. Do not add generic homework, a citation-count score, or a global confidence badge.
 
 ## Use visuals when they explain something

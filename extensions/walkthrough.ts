@@ -649,7 +649,9 @@ export default function walkthrough(pi: ExtensionAPI) {
 		description:
 			"Render a source-linked article from title, mode, structured scope, summary and sections. Fields accumulate across calls. " +
 			"Checks, limits, changes and visuals default to empty arrays. Evidence quotes must occur verbatim in cited output. " +
-			"Visuals must cite captured images; material failures and refusals remain visible as limits.",
+			"Visuals must cite captured images. " +
+			"Prose fields accept pipe tables, lists, `code`, **bold** and KaTeX math ($...$ inline, $$...$$ display). " +
+			"Material failures and refusals remain visible as limits.",
 		promptSnippet: "walkthrough_write: render the walkthrough page from recorded evidence",
 		parameters: WriteParams,
 		prepareArguments: (args) => prepareWriteArgs(args) as never,

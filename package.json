@@ -1,14 +1,31 @@
 {
   "name": "pi-walkthrough",
   "version": "0.1.0",
-  "description": "Readable, source-linked code walkthroughs with verification and explanation modes",
+  "description": "Readable, source-linked code walkthroughs with verification and explanation modes, KaTeX math and tables",
   "license": "MIT",
   "type": "module",
-  "keywords": ["pi-package", "pi", "walkthrough", "evidence"],
-  "files": ["extensions/", "skills/", "docs/", "README.md"],
+  "keywords": [
+    "pi-package",
+    "pi",
+    "walkthrough",
+    "evidence"
+  ],
+  "files": [
+    "extensions/",
+    "skills/",
+    "docs/",
+    "README.md"
+  ],
   "pi": {
-    "extensions": ["./extensions/walkthrough.ts"],
-    "skills": ["./skills"]
+    "extensions": [
+      "./extensions/walkthrough.ts"
+    ],
+    "skills": [
+      "./skills"
+    ]
+  },
+  "dependencies": {
+    "katex": "^0.16.47"
   },
   "peerDependencies": {
     "@earendil-works/pi-ai": "*",

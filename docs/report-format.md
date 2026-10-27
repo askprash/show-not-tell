@@ -15,11 +15,20 @@ Both modes are report-only. Both resolve Git scope and retain recorded sources. 
 `extensions/report-types.ts` is the shared TypeScript contract. The write tool accepts the fields of `WritePayload`, either together or across calls. `title`, `mode`, `scope`, `summary`, and `sections` define the article. Empty `checks`, `limits`, `changes`, and `visuals` arrays are valid; the tool supplies those defaults. The old seven-section payload is replaced, not maintained as a second report format.
 
 - `scope` supplies a descriptive label and Git head, optionally a comparison base. The tool resolves immutable commits from the repository. With no base, the scope is that single commit. An unavailable Git ref is reported, not guessed. `include_working_tree` explicitly declares whether uncommitted content is included.
-- `sections` are ordered, plain-text paragraphs with reader-chosen headings. IDs use lowercase letters, digits, and hyphens, begin with a letter, and cannot collide with reserved IDs `overview`, `checks`, `limits`, `changes`, `scope`, `log`, `technical`, or record IDs. Evidence items carry a record ID, a short observation, and optionally a verbatim output excerpt. The renderer must not repeat the full command here.
+- `sections` are ordered prose blocks with reader-chosen headings (see Prose markup). IDs use lowercase letters, digits, and hyphens, begin with a letter, and cannot collide with reserved IDs `overview`, `checks`, `limits`, `changes`, `scope`, `log`, `technical`, or record IDs. Evidence items carry a record ID, a short observation, and optionally a verbatim output excerpt. The renderer must not repeat the full command here.
 - `checks` distinguish passed, failed, blocked, not-run, and inspected. Every status except `not-run`, including `blocked`, requires at least one executed or inspected record. Refused commands can be cited in limits and diagram navigation, not as check or article evidence. Exit zero alone is not a passing scientific or test result.
 - `limits` state material uncertainty once. Failed runs and report-only refusals are automatically included when not already represented. Important limits are not hidden in the appendix.
 - `changes` contain one actual repository-relative path per entry. They are not glob patterns or comma-separated groups. File links, when available, use the resolved head commit.
 - `visuals` name image files captured by a record. The tool checks the captured file's hash before embedding it. `section_id` defaults to `overview`; otherwise it must name an authored section. The first visual is not silently moved to another section. A plot explains a numerical result; a diagram explains structure or reasoning. Captions explain what the image means, not how its command was launched.
+
+
+## Prose markup
+
+Authored prose fields (summary, section text and titles, evidence summaries, captions, check and limit text, change notes) use a closed Markdown subset: paragraphs, pipe tables with optional column alignment, bullet and numbered lists, fenced code, `` `code` ``, `**bold**`, `$...$` inline math and `$$...$$` display math. `\$` is a literal dollar sign, and `$5 and $10` stays text (a closing `$` before a digit or after a space does not close math). Prose without markup renders as escaped paragraphs.
+
+There are no links, images, raw HTML or attributes. Everything else is escaped. Math is rendered to HTML and MathML by KaTeX at write time with `trust: false`, so `\href`, `\url`, `\includegraphics` and `\html*` commands produce no active output. Invalid LaTeX is shown in an error color and does not stop the write. When a page contains math, the KaTeX stylesheet and its WOFF2 fonts are inlined as data URLs, so the page stays offline. Pages without math do not include them.
+
+Runtime-generated text (automatic limits, paths, metadata, recorded output) is never parsed as markup.
 
 ## Linked diagrams
 

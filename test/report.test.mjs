@@ -235,10 +235,12 @@ test('empty optional sections and log are omitted; prose keeps plain-text paragr
   f.payload.sections = [];
   f.payload.checks = [];
   f.log = [];
-  f.payload.summary = 'First **plain** paragraph.\n\nSecond paragraph.';
+  f.payload.summary = 'First **bold** paragraph costs $5 and $10.\n\nSecond paragraph.';
   const html = render(f);
   for (const id of ['checks', 'changes', 'limits', 'log']) assert.ok(!html.includes(`id="${id}"`));
-  assert.match(html, /<p>First \*\*plain\*\* paragraph\.<\/p><p>Second paragraph\.<\/p>/);
+  assert.match(html, /<p>First <strong>bold<\/strong> paragraph costs \$5 and \$10\.<\/p><p>Second paragraph\.<\/p>/);
+  assert.doesNotMatch(html, /class="katex/);
+  assert.doesNotMatch(html, /@font-face/);
   assert.match(html, /id="scope"/);
   assert.doesNotMatch(html, /Nothing listed|No files listed|No commands were recorded/);
 });
@@ -273,3 +275,40 @@ test('hash reveal script opens nested details on click, initial load and navigat
   assert.doesNotThrow(handlers.hashchange);
   assert.ok(!script.includes(f.payload.title));
 });
+
+test('pipe tables render as tables with inline code, math and escaped pipes', () => {
+  const f = fixture();
+  f.payload.sections[0].text = 'Before.\n| Stage | What runs | Cost |\n|---|---|---:|\n| Direct | `solve!` once, a \\| b | $n^2$ |\n| Retry | <b>x</b> | 8 |\nAfter.';
+  const html = render(f);
+  const section = region(html, 'bound');
+  assert.match(section, /<p>Before\.<\/p><div class="table-scroll prose-table"[^>]*><table><thead><tr><th scope="col">Stage<\/th>/);
+  assert.match(section, /<th scope="col" style="text-align:right">Cost<\/th>/);
+  assert.match(section, /<td><code>solve!<\/code> once, a \| b<\/td>/);
+  assert.match(section, /<td style="text-align:right"><span class="katex">/);
+  assert.match(section, /<td>&lt;b&gt;x&lt;\/b&gt;<\/td>/);
+  assert.match(section, /<p>After\.<\/p>/);
+  assert.doesNotMatch(section, /\|---/);
+});
+
+test('math renders with KaTeX offline; untrusted commands do not create links', () => {
+  const f = fixture();
+  f.payload.sections[0].text = 'The row is $\\phi(a,b) = a + b - \\sqrt{a^2+b^2}$.\n\n$$\n\\phi = 0 \\iff a \\ge 0,\\ b \\ge 0,\\ ab = 0\n$$\n\nBad: $\\href{javascript:alert(1)}{x}$ and $\\frac{1$.';
+  const html = render(f);
+  assert.match(html, /<span class="katex">/);
+  assert.match(html, /<div class="math-display"><span class="katex-display">/);
+  assert.match(html, /<annotation encoding="application\/x-tex">\\phi\(a,b\)/);
+  assert.doesNotMatch(html, /href="javascript/);
+  assert.match(html, /@font-face\{[^}]*src:url\(data:font\/woff2;base64,/);
+  assert.doesNotMatch(html, /url\(fonts\//);
+  assert.match(html, /font-src data:/);
+});
+
+
+test('table cells keep currency, math, escaped pipes and extra cells', async () => {
+  const { prose } = await import('../extensions/markup.ts');
+  const table = prose('| s | cost | r |\n|---|---|---|\n| a | $5 | Passed |\n| a \\| b | $x$ | four | extra |');
+  assert.match(table, /<td>a<\/td><td>\$5<\/td><td>Passed<\/td>/);
+  assert.match(table, /<td>a \| b<\/td><td><span class="katex">/);
+  assert.match(table, /<td>four<\/td><td>extra<\/td>/, 'extra cells are kept, not dropped');
+});
+

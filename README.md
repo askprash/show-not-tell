@@ -14,7 +14,7 @@ Or try the package for one session without installing it:
 pi -e /path/to/pi-walkthrough
 ```
 
-The package is prepared for npm distribution but has not been published. The intended npm install command is `pi install npm:pi-walkthrough` after publication.
+The package is prepared for npm distribution but has not been published. The intended npm install command is `pi install npm:pi-walkthrough` after publication. A local checkout needs `npm install` first, for KaTeX.
 
 ## Choose a walkthrough
 
@@ -33,7 +33,7 @@ Omit `--mode` to use verification. A walkthrough stays focused on the named chan
 
 ## Read the page
 
-The page starts with a descriptive title, scope links, and a short bottom line. Its sections follow the subject rather than a fixed audit form. Relevant plots and linked flowcharts can explain results and code paths. Important failed checks and limits remain visible.
+The page starts with a descriptive title, scope links, and a short bottom line. Its sections follow the subject rather than a fixed audit form. Equations render with KaTeX, and comparisons render as tables. Relevant plots and linked flowcharts can explain results and code paths. Important failed checks and limits remain visible.
 
 Changed files, commit details, and exact commands are expandable. Each command record starts with a short action description. Long commands keep their line breaks inside the record rather than appearing in the article, captions, or collapsed headings. Readable output views retain the recorded text for inspection.
 
