@@ -2,23 +2,19 @@
 
 npm package: `show-not-tell`. In Pi, run it as `/walkthrough`.
 
-Walk through a code change in a readable HTML page, with links to its commits and the work behind it. Start with an explanation or a result. Open the exact commands and output when you want to inspect the evidence.
+Explain a code change in a readable HTML page that links to its commits and to the commands behind each claim. The page leads with the explanation; the exact commands and output are one click away.
 
-## Install locally
+## Install
 
 ```sh
+pi install npm:show-not-tell      # after publication
 pi install /path/to/pi-walkthrough
+pi -e /path/to/pi-walkthrough     # one session, no install
 ```
 
-Or try the package for one session without installing it:
+A local checkout needs `npm install` first, for KaTeX.
 
-```sh
-pi -e /path/to/pi-walkthrough
-```
-
-The package is prepared for npm distribution but has not been published. After publication, install it with `pi install npm:show-not-tell`. A local checkout needs `npm install` first, for KaTeX.
-
-## Choose a walkthrough
+## Run
 
 In a repository, start Pi and ask:
 
@@ -27,58 +23,63 @@ In a repository, start Pi and ask:
 /walkthrough --mode=explanation how the solver builds and evaluates a residual
 ```
 
-**Verification** demonstrates behavior with relevant examples and checks. It separates observations made during the walkthrough from measurements read from existing benchmark files.
+- **Verification** (the default) runs relevant examples and checks. It separates what it observed from numbers read out of committed files.
+- **Explanation** teaches the code, algorithm or reasoning. Reading code is recorded as inspection, not as a passing test.
 
-**Explanation** teaches the code, algorithm, architecture, or scientific reasoning. It records the inspected source without implying that code inspection is a passing test. Both modes identify the commits they cover and say whether uncommitted changes are included.
+Both modes stay on the named change or question, name the commits they cover, and say whether uncommitted changes are included.
 
-Omit `--mode` to use verification. A walkthrough stays focused on the named change or question, not the entire repository.
+## The page
 
-## Read the page
+- A title, scope links and a short bottom line, then sections that follow the subject.
+- Equations in KaTeX, comparisons in tables, and diagrams drawn with the bundled figkit library.
+- Decisions and commits cited by what they say, linked to the file or commit; their numbers appear only in tooltips and the References list.
+- Failed checks and limits stay in the reading path.
+- A contents list on pages with three or more sections.
+- An expandable command log with Expand all, Collapse all and Copy buttons.
+- Diffs shaded per line: additions blue, deletions vermilion. Both stay clear with red-green color blindness, and the `+` and `-` markers carry the meaning without color.
 
-The page starts with a descriptive title, scope links, and a short bottom line. Its sections follow the subject rather than a fixed audit form. Equations render with KaTeX, and comparisons render as tables. Diagrams are drawn with the bundled figkit library, linted, and embedded with their text converted to outlines. Plots can be embedded from recorded commands. Important failed checks and limits remain visible.
+The page is written to `.walkthrough/<title>.html` and works offline. The evidence log is `.walkthrough/evidence.jsonl`, and captured images are in `.walkthrough/figs/`. With a GitHub or GitLab remote, links point to immutable commits.
 
-Pages with three or more sections start with a contents list; on wide screens it stays beside the article. Changed files, commit details, and exact commands are expandable, and the command log has Expand all and Collapse all buttons. Each exact command has a Copy button. Recorded diffs are shaded line by line: additions in blue, deletions in vermilion, and hunk headers in purple. These colors stay distinct with red-green color blindness, and the `+` and `-` markers keep the meaning without color. Each command record starts with a short action description. Long commands keep their line breaks inside the record rather than appearing in the article, captions, or collapsed headings. Readable output views retain the recorded text for inspection.
+## Diagrams
 
-Output is written to `.walkthrough/<title>.html`, with the evidence log in `.walkthrough/evidence.jsonl` and captured images in `.walkthrough/figs/`. The HTML is self-contained and works offline. A supported GitHub or GitLab remote adds immutable commit, comparison, and source links; local evidence remains accessible when no remote is available.
+figkit is adapted from the svg-figs skill. It needs uv, XeLaTeX with dvisvgm, rsvg-convert, and the STIX Two Text, IBM Plex Mono and New Computer Modern Math fonts. Run `figkit/scripts/check-env.sh` to see what is missing. Without them, walkthroughs still render and use tables in place of diagrams.
 
-## Plots and linked diagrams
-
-A visual is optional. Use a plot for numerical behavior, a flowchart for structure or reasoning, and a table when that is easier to read. There is no required plot count or automatic file-churn chart.
-
-Diagrams use the bundled `figkit/` library, adapted from the svg-figs skill. It needs uv, XeLaTeX with dvisvgm, rsvg-convert, and the STIX Two Text, IBM Plex Mono and New Computer Modern Math fonts; run `figkit/scripts/check-env.sh` to see what is missing. Without these tools, walkthroughs still render, using tables in place of diagrams. Every image, including figkit SVG, is embedded as a non-active image. Validated HTML link regions connect diagram nodes to article sections and evidence records, with a text-link alternative for keyboard access.
-
-See [the report format](docs/report-format.md) for the write payload and diagram link coordinates.
+Each figkit diagram is linted, previewed for the agent, and embedded as an image with its text converted to outlines. Diagrams can link regions to sections and records. See [the report format](docs/report-format.md) for the payload.
 
 ## Recording and safety
 
-During a walkthrough, the active tools are `walkthrough_record` and `walkthrough_write`. The first records commands, output, exit status, and captured images. The second checks evidence references, quoted output, and figure hashes before rendering the page. The exact command and stored output are not rewritten for presentation.
+During a walkthrough the only tools are `walkthrough_record`, which runs a command and stores its output, and `walkthrough_write`, which checks evidence references, quotes and figure hashes before rendering. Recorded commands and output are never rewritten.
 
-The default budget is 20 commands and 5 minutes. Individual commands have a 60-second timeout, configurable up to 120 seconds. Override the overall limits with `WALKTHROUGH_MAX_RECORDS` and `WALKTHROUGH_BUDGET_S`.
+| Limit | Default | Override |
+|---|---|---|
+| Commands | 20 | `WALKTHROUGH_MAX_RECORDS` |
+| Total time | 5 min | `WALKTHROUGH_BUDGET_S` |
+| Per command | 60 s, up to 120 s | `timeout_s` |
 
-Walkthroughs are report-only. The command runner refuses selected destructive Git and deletion commands and protects its own log and page files. It takes working-tree snapshots before and after the walkthrough and reports observed changes. This is **not an operating-system sandbox**: shell commands can still write files, and ignored files are not checked apart from new top-level directories. Run only trusted commands; use an OS sandbox when stronger isolation is needed.
+Walkthroughs are report-only. The runner refuses destructive Git and deletion commands, protects its own files, and reports working-tree changes from before-and-after snapshots. **It is not a sandbox**: commands can still write files, and ignored files are not checked. Use an OS sandbox when you need isolation.
 
-The `at_ref` option runs a command in a temporary detached Git worktree, optionally with selected test files copied in. It can help establish a regression test, but is not required for every change. The worktree borrows `.venv`, `venv`, and `node_modules` when available; other untracked environment files may be missing. An environment failure is reported as blocked verification.
+`at_ref` runs a command in a temporary Git worktree, optionally with test files copied in, to show that a new test fails on the old code. The worktree borrows `.venv`, `venv` and `node_modules`; other untracked environment files may be missing.
 
 ## Under nono
 
-Grant read access to the package and the configuration files Git needs, plus write access to the caches used by plotting tools. For example:
+Grant read access to the package and Git's configuration, and write access to the caches that figures use:
 
 ```sh
 nono run --profile mit-parley --allow-cwd --workdir "$PWD" \
   --read /path/to/pi-walkthrough --read-file ~/.gitconfig \
-  --allow ~/.cache/uv --allow ~/.matplotlib \
+  --allow ~/.cache/uv --allow ~/.cache/agent-walkthrough --allow ~/.matplotlib \
   -- pi -e /path/to/pi-walkthrough
 ```
 
-The nono profile and programs must already exist on the machine. Without access to the package, Pi cannot load it. A Python installation outside the repository may need an additional read grant.
+A Python installation outside the repository may need another read grant.
 
 ## Development
 
-Node 22.18 or later is required. Tests resolve the host-provided Pi packages from the global installation; set `PI_ROOT` if that installation is elsewhere.
+Requires Node 22.18 or later. Tests load the host Pi packages from the global install; set `PI_ROOT` if it is elsewhere.
 
 ```sh
 npm test
 npm pack --dry-run
 ```
 
-Private `.backlog/` tracking, local `.pi/` state, generated reports, and tarballs are ignored. The npm package uses an explicit file allowlist; private tracking is not part of the published package.
+npm publishes only the paths in the `files` allowlist: `extensions/`, `skills/`, `docs/`, `figkit/`, the README and the license.
