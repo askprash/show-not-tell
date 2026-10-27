@@ -62,16 +62,28 @@ Walkthroughs are report-only. The runner refuses destructive Git and deletion co
 
 ## Under nono
 
-Grant read access to the package and Git's configuration, and write access to the caches that figures use:
+Your Pi profile for [nono](https://nono.sh) must grant the project folder and `~/.pi/agent`, where `pi install npm:show-not-tell` puts the package. A walkthrough also needs:
+
+| Grant | Why |
+|---|---|
+| `--read-file ~/.gitconfig` | Git reads it on every command |
+| `--read <main repo>/.git` | only when the project is a Git worktree; its `.git` file points there |
+| `--read /path/to/pi-walkthrough` | only for `pi -e` from a local checkout |
+| `--allow ~/.matplotlib` | only for matplotlib plots |
+
+figkit diagrams also need uv's Python, the TeX installation, the fonts, and write access to their caches:
 
 ```sh
-nono run --profile <your-profile> --allow-cwd --workdir "$PWD" \
-  --read /path/to/pi-walkthrough --read-file ~/.gitconfig \
-  --allow ~/.cache/uv --allow ~/.cache/agent-walkthrough --allow ~/.matplotlib \
-  -- pi -e /path/to/pi-walkthrough
+nono run --profile <your-pi-profile> --allow-cwd --workdir "$PWD" \
+  --read-file ~/.gitconfig \
+  --read ~/.local/share/uv --allow ~/.cache/uv \
+  --read /Library/TeX --read /usr/local/texlive --allow ~/Library/texlive \
+  --read ~/Library/Fonts --allow ~/.cache/fontconfig \
+  --allow ~/.cache/agent-walkthrough \
+  -- pi
 ```
 
-A Python installation outside the repository may need another read grant.
+The TeX paths are for MacTeX on macOS; on Linux, grant your TeX Live directory and `~/.texlive*`. Without the figkit grants, `figkit/scripts/check-env.sh` fails inside the sandbox and walkthroughs use tables in place of diagrams. `nono run --dry-run` lists the resulting grants without running anything.
 
 ## Development
 
