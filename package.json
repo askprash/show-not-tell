@@ -1,5 +1,5 @@
 {
-  "name": "@askprash/walkthrough",
+  "name": "show-not-tell",
   "version": "0.1.0",
   "description": "Readable, source-linked code walkthroughs for Pi, with KaTeX math, tables and linted diagrams",
   "license": "MIT",
@@ -9,7 +9,8 @@
     "pi",
     "walkthrough",
     "evidence",
-    "code-review"
+    "code-review",
+    "show-not-tell"
   ],
   "files": [
     "extensions/",
