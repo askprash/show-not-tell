@@ -66,6 +66,30 @@ export interface CheckResult {
   record_ids?: string[];
 }
 
+/**
+ * A document, decision record or commit that prose cites as [[id]]. The label is what the reader
+ * sees: the decision or change in words, not its number. The identifier (ADR-0028, a hash) stays
+ * in the link title and the References appendix.
+ */
+export interface Reference {
+  id: string;
+  label: string;
+  /** Repository-relative file, resolved at the scope head. */
+  path?: string;
+  /** Commit ref, resolved to an immutable hash. */
+  commit?: string;
+  /** Short identifier shown in technical details, e.g. "ADR-0028". */
+  identifier?: string;
+  /** Record in which this source was read. */
+  record_id?: string;
+}
+
+export interface ResolvedReference extends Reference {
+  url?: string;
+  sha?: string;
+  missing?: string;
+}
+
 export interface ChangedFile {
   path: string;
   note: string;
@@ -103,6 +127,7 @@ export interface WritePayload {
   limits: { text: string; record_id?: string }[];
   changes: ChangedFile[];
   visuals: VisualRef[];
+  references?: Reference[];
 }
 
 export interface ResolvedScope {
@@ -136,4 +161,5 @@ export interface PageExtras {
   autoLimits: { text: string; record_id?: string }[];
   tree?: { checked: boolean; changed: string[]; before_id?: string; after_id?: string };
   fileUrls?: Record<string, string>;
+  references?: ResolvedReference[];
 }

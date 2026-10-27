@@ -31,7 +31,8 @@ import { fileURLToPath } from "node:url";
 import { Type, StringEnum } from "@earendil-works/pi-ai";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { renderPage } from "./report.ts";
-import type { EvidenceRecord, FigureFile, WritePayload, PageMeta, PageExtras, ScopeRequest, ResolvedScope, WalkthroughMode } from "./report-types.ts";
+import { bareIdentifiers, density, referenceIds, shortField } from "./prose-lint.ts";
+import type { EvidenceRecord, FigureFile, ResolvedReference, WritePayload, PageMeta, PageExtras, ScopeRequest, ResolvedScope, WalkthroughMode } from "./report-types.ts";
 export type * from "./report-types.ts";
 
 const OUT_DIR = ".walkthrough";
@@ -44,7 +45,7 @@ const MAX_FIG_BYTES = 5 * 1024 * 1024;
 const MAX_FIGS_PER_RECORD = 4;
 export const ALLOWED_TOOLS = ["walkthrough_record", "walkthrough_write"];
 const WRITE_KEYS = ["title", "mode", "scope", "summary", "sections"];
-const OPTIONAL_ARRAYS = ["checks", "limits", "changes", "visuals"];
+const OPTIONAL_ARRAYS = ["checks", "limits", "changes", "visuals", "references"];
 
 const HERE = typeof __dirname === "string" ? __dirname : dirname(fileURLToPath(import.meta.url));
 const SKILL_FILE = resolve(HERE, "..", "skills", "walkthrough", "SKILL.md");
@@ -367,13 +368,13 @@ export function prepareWriteArgs(args: unknown): unknown {
 		}
 		if (Array.isArray(value)) return value.map(decode);
 		if (value && typeof value === "object") return Object.fromEntries(Object.entries(value).map(([k, v]) =>
-			[k, ["text", "title", "summary", "quote", "caption", "alt", "label", "note", "path", "head", "base", "file", "target", "lines", "id", "record_id", "section_id", "mode", "kind", "status"].includes(k) ? v : decode(v)]));
+			[k, ["text", "title", "summary", "quote", "caption", "alt", "label", "note", "path", "head", "base", "file", "target", "lines", "id", "record_id", "section_id", "mode", "kind", "status", "commit", "identifier"].includes(k) ? v : decode(v)]));
 		return value;
 	};
 	return decode(args);
 }
 
-const RESERVED_IDS = new Set(["overview", "checks", "limits", "changes", "scope", "log", "technical"]);
+const RESERVED_IDS = new Set(["overview", "checks", "limits", "changes", "references", "scope", "log", "technical"]);
 const ID = /^[a-z][a-z0-9-]*$/;
 
 // Remote URLs come only from the local origin configuration; no network lookup is needed.
@@ -480,6 +481,14 @@ const WriteFields = Type.Object({
 	checks: Type.Array(Type.Object({ label: Type.String(), status: StringEnum(["passed", "failed", "blocked", "not-run", "inspected"]), summary: Type.String(), record_ids: Type.Optional(Type.Array(Type.String())) })),
 	limits: Type.Array(Type.Object({ text: Type.String(), record_id: Ref("Record explaining this limit.") })),
 	changes: Type.Array(Type.Object({ path: Type.String(), note: Type.String(), lines: Ref("Committed line or range, e.g. 10-20."), record_id: Ref("Record showing this change.") })),
+	references: Type.Array(Type.Object({
+		id: Type.String({ description: "Lowercase hyphenated id; cite it in prose as [[id]] or [[id|other words]]." }),
+		label: Type.String({ description: "What the reader sees: the decision or change in words, e.g. \"the decision to choose the nozzle regime inside Newton\". Not a number." }),
+		path: Ref("Repository-relative file, e.g. docs/adr/0028-nozzle-regime-inside-newton.md."),
+		commit: Ref("Commit ref for a change, resolved to its hash."),
+		identifier: Ref("Short identifier kept in technical details, e.g. ADR-0028."),
+		record_id: Ref("Record in which you read this source."),
+	}), { description: "Documents, decision records and commits cited in prose. Never write their numbers or hashes in prose." }),
 	visuals: Type.Array(Type.Object({ record_id: Type.String(), file: Ref("Captured image name."), kind: StringEnum(["plot", "diagram"]), caption: Type.String(), alt: Ref("Accessible image description."), section_id: Ref("Section id; default overview."), links: Type.Optional(Type.Array(Type.Object({ label: Type.String(), target: Type.String(), x: Type.Number(), y: Type.Number(), width: Type.Number(), height: Type.Number() }))) })),
 });
 
@@ -704,7 +713,9 @@ export default function walkthrough(pi: ExtensionAPI) {
 			"Render a source-linked article from title, mode, structured scope, summary and sections. Fields accumulate across calls. " +
 			"Checks, limits, changes and visuals default to empty arrays. Evidence quotes must occur verbatim in cited output. " +
 			"Visuals must cite captured images. " +
-			"Prose fields accept pipe tables, lists, `code`, **bold** and KaTeX math ($...$ inline, $$...$$ display). " +
+			"Prose fields accept pipe tables, lists, `code`, **bold**, KaTeX math ($...$ inline, $$...$$ display) and [[reference-id]] links. " +
+			"Readability is checked: no bare ticket, ADR or commit numbers in prose (declare them in references with a label that states the decision), " +
+			"paragraphs of at most 60 words, list items of at most 40, and short captions and summaries. " +
 			"Material failures and refusals remain visible as limits.",
 		promptSnippet: "walkthrough_write: render the walkthrough page from recorded evidence",
 		parameters: WriteParams,
@@ -728,7 +739,7 @@ export default function walkthrough(pi: ExtensionAPI) {
 			const valid = new Map(log.filter((r) => !r.refused).map((r) => [r.id, r]));
 			const ids = new Set<string>();
 			for (const section of p.sections) {
-				if (!ID.test(section.id) || RESERVED_IDS.has(section.id) || log.some((r) => r.id === section.id) || /^r[0-9]+$/.test(section.id) || ids.has(section.id)) problems.push(`sections: invalid or colliding id "${section.id}"`);
+				if (!ID.test(section.id) || RESERVED_IDS.has(section.id) || section.id.startsWith("ref-") || log.some((r) => r.id === section.id) || /^r[0-9]+$/.test(section.id) || ids.has(section.id)) problems.push(`sections: invalid or colliding id "${section.id}"`);
 				ids.add(section.id);
 			}
 			const sectionIds = new Set(["overview", ...ids]);
@@ -788,6 +799,38 @@ export default function walkthrough(pi: ExtensionAPI) {
 				}
 				visuals.push({ ...v, src: `data:${chosen.path.toLowerCase().endsWith(".svg") ? "image/svg+xml" : "image/png"};base64,${buf.toString("base64")}` });
 			});
+			// References: declared once, cited by [[id]], resolved to files and commits at the scope head.
+			const refIds = new Set<string>();
+			p.references.forEach((r, i) => {
+				if (!ID.test(r.id) || refIds.has(r.id)) problems.push(`references[${i}]: invalid or duplicate id "${r.id}"`);
+				refIds.add(r.id);
+				check(`references[${i}]`, r.record_id);
+				if (r.path !== undefined && !repositoryPath(r.path)) problems.push(`references[${i}]: path must be one repository-relative file`);
+				if (!r.path && !r.commit) problems.push(`references[${i}]: give a path or a commit`);
+				if (/\[\[|\]\]/.test(r.label)) problems.push(`references[${i}]: label "${r.label}" cannot contain [[ or ]]; write the decision in words`);
+				if (bareIdentifiers(r.label).length || /^\W*[A-Z]{2,}[-\s]?\d+\W*$/.test(r.label.trim())) problems.push(`references[${i}]: label "${r.label}" must state the decision or change in words, not its number`);
+			});
+			const style: string[] = [];
+			const prosed: [string, string, "block" | "short" | "title"][] = [
+				["scope.label", p.scope.label, "title"],
+				["title", p.title, "title"],
+				["summary", p.summary, "block"],
+				...p.sections.flatMap((s, i) => [[`sections[${i}] "${s.id}" title`, s.title, "title"], [`sections[${i}] "${s.id}" text`, s.text, "block"],
+					...(s.evidence ?? []).map((e, j) => [`sections[${i}].evidence[${j}].summary`, e.summary, "short"])] as [string, string, "block" | "short" | "title"][]),
+				...p.checks.flatMap((c, i) => [[`checks[${i}].label`, c.label, "title"], [`checks[${i}].summary`, c.summary, "short"]] as [string, string, "block" | "short" | "title"][]),
+				...p.limits.map((l, i) => [`limits[${i}]`, l.text, "short"] as [string, string, "block" | "short" | "title"]),
+				...p.changes.map((c, i) => [`changes[${i}].note`, c.note, "short"] as [string, string, "block" | "short" | "title"]),
+				...p.visuals.flatMap((v, i) => [[`visuals[${i}].caption`, v.caption, "short"], ...(v.alt ? [[`visuals[${i}].alt`, v.alt, "title"]] : [])] as [string, string, "block" | "short" | "title"][]),
+			];
+			for (const [where, text, kind] of prosed) {
+				for (const id of referenceIds(text)) if (!refIds.has(id)) problems.push(`${where}: [[${id}]] is not a declared reference`);
+				const ids = bareIdentifiers(text);
+				if (ids.length) style.push(`${where}: bare identifier${ids.length > 1 ? "s" : ""} ${ids.map((x) => `"${x}"`).join(", ")}. A reader does not know what these mean. Declare each source in references with a label that states the decision or change, and cite it as [[id]]`);
+				if (kind === "block") style.push(...density(text).map((d) => `${where}: ${d}`));
+				if (kind === "short") style.push(...shortField(text).map((d) => `${where}: ${d}`));
+				if (kind === "title" && (text.match(/\S+/g) ?? []).length > 14) style.push(`${where}: a title or label over 14 words; shorten it`);
+			}
+			if (style.length) problems.push(...style.map((x) => `readability: ${x}`));
 			if (problems.length) throw new Error(`walkthrough_write rejected:\n- ${problems.join("\n- ")}\nValid record ids: ${[...valid.keys()].join(", ") || "(none recorded)"}.`);
 
 			// A repeated write replaces the after snapshot rather than accumulating synthetic records.
@@ -812,6 +855,21 @@ export default function walkthrough(pi: ExtensionAPI) {
 				}
 				if (remote) fileUrls[c.path] = `${remote}${remote.includes("gitlab.com/") ? "/-/blob/" : "/blob/"}${scope.head_sha}/${c.path.split("/").map(encodeURIComponent).join("/")}${c.lines ? `#L${c.lines.replace("-", remote.includes("gitlab.com/") ? "-" : "-L")}` : ""}`;
 			}
+			const references: ResolvedReference[] = p.references.map((r) => {
+				const out: ResolvedReference = { ...r };
+				const blob = remote?.includes("gitlab.com/") ? "/-/blob/" : "/blob/";
+				if (r.commit) {
+					const sha = resolveCommit(cwd, r.commit);
+					if (!sha) out.missing = `Commit ${r.commit} could not be resolved.`;
+					else { out.sha = sha; if (remote) out.url = `${remote}${remote.includes("gitlab.com/") ? "/-/commit/" : "/commit/"}${sha}`; }
+				} else if (r.path && scope.head_sha) {
+					const exists = gitRun(cwd, ["cat-file", "-t", `${scope.head_sha}:${r.path}`]);
+					if (exists.status !== 0 || exists.stdout.trim() !== "blob") out.missing = `${r.path} is not a committed file at the scope head.`;
+					else { out.sha = scope.head_sha; if (remote) out.url = `${remote}${blob}${scope.head_sha}/${r.path.split("/").map(encodeURIComponent).join("/")}`; }
+				}
+				return out;
+			});
+			for (const r of references) if (r.missing) autoLimits.push({ text: `Reference "${r.label}": ${r.missing}`, record_id: r.record_id });
 			const covered = new Set([...p.limits.map((l) => l.record_id), ...p.checks.filter((c) => ["failed", "blocked", "not-run"].includes(c.status)).flatMap((c) => c.record_ids ?? [])]);
 			for (const r of log) {
 				if (covered.has(r.id)) continue;
@@ -836,7 +894,7 @@ export default function walkthrough(pi: ExtensionAPI) {
 				model: ctx.model ? `${ctx.model.provider}/${ctx.model.id}` : undefined,
 				cwd,
 			};
-			const html = renderPage(p, log, meta, { scope, visuals, autoLimits, tree, fileUrls });
+			const html = renderPage(p, log, meta, { scope, visuals, autoLimits, tree, fileUrls, references });
 			const dir = join(cwd, OUT_DIR);
 			mkdirSync(dir, { recursive: true });
 			const file = join(dir, `${slugify(p.title)}.html`);

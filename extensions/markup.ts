@@ -33,6 +33,15 @@ function closingDollar(s: string, from: number): number {
 	return -1;
 }
 
+export interface RefTarget { href?: string; label: string; title: string }
+let refResolver: ((id: string) => RefTarget | undefined) | undefined;
+/** Set while rendering one page; [[id]] in prose resolves through it. */
+export function withReferences<T>(resolve: typeof refResolver, fn: () => T): T {
+	const prev = refResolver;
+	refResolver = resolve;
+	try { return fn(); } finally { refResolver = prev; }
+}
+
 export function inline(s: string, strong = true): string {
 	let out = "";
 	let text = "";
@@ -43,6 +52,22 @@ export function inline(s: string, strong = true): string {
 		if (c === "`") {
 			const end = s.indexOf("`", i + 1);
 			if (end > i + 1) { flush(); out += `<code>${esc(s.slice(i + 1, end))}</code>`; i = end; continue; }
+		}
+		if (c === "[" && s[i + 1] === "[") {
+			const end = s.indexOf("]]", i + 2);
+			const m = end > 0 ? /^([a-z][a-z0-9-]*)(?:\|([^\]]+))?$/.exec(s.slice(i + 2, end)) : null;
+			const ref = m && refResolver?.(m[1]);
+			if (m && ref) {
+				flush();
+				// Labels render without reference expansion, so a label citing itself cannot recurse.
+				const saved = refResolver;
+				refResolver = undefined;
+				let label: string;
+				try { label = inline(m[2] ?? ref.label, false); } finally { refResolver = saved; }
+				out += ref.href ? `<a class="ref" href="${esc(ref.href)}" title="${esc(ref.title)}"${ref.href.startsWith("#") ? "" : ' rel="noreferrer"'}>${label}</a>` : `<span class="ref" title="${esc(ref.title)}">${label}</span>`;
+				i = end + 1;
+				continue;
+			}
 		}
 		if (c === "$" && s[i + 1] === "$") {
 			const end = s.indexOf("$$", i + 2);
@@ -64,11 +89,12 @@ export function inline(s: string, strong = true): string {
 
 /**
  * End index (inclusive) of the inline token starting at i, using the same rules as inline():
- * a closed code span, $$...$$, or $...$ under the Pandoc rule. -1 when none starts here.
+ * a closed code span, $$...$$, $...$ under the Pandoc rule, or [[...]]. -1 when none starts here.
  */
 export function tokenEnd(s: string, i: number): number {
 	const c = s[i];
 	if (c === "`") { const end = s.indexOf("`", i + 1); return end > i + 1 ? end : -1; }
+	if (c === "[" && s[i + 1] === "[") { const end = s.indexOf("]]", i + 2); return end > i + 2 ? end + 1 : -1; }
 	if (c === "$" && s[i + 1] === "$") { const end = s.indexOf("$$", i + 2); return end > i + 2 ? end + 1 : -1; }
 	if (c === "$" && s[i - 1] !== "\\" && s[i + 1] && !/\s/.test(s[i + 1])) { const end = closingDollar(s, i + 1); return end > i + 1 ? end : -1; }
 	return -1;

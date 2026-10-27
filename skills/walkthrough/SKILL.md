@@ -35,17 +35,36 @@ The default budget is 20 commands and 5 minutes, with 60 seconds per command (12
 4. In verification mode, run checks that address the claim. A parent-version run with an overlaid new test is useful when showing a regression fix. Do not require it for coverage of behavior that was already correct. An environment failure is blocked verification, not evidence that the old code is wrong.
 5. State material limits next to the result or under Limits. Separate measurements made here from values read from committed files. State what a test asserts, not just that it passed.
 
+## Write for scanning
+
+The reader skims first and reads second. Prefer structure over paragraphs:
+
+- **Lead each section with one or two sentences** that say what the code does or why it changed. Then give the details as bullets, one point per bullet.
+- **Use bullets for steps, conditions, consequences and trade-offs.** Use a numbered list when order matters. Never write "(1) … (2) …" inside a paragraph.
+- **Use a table to compare** before and after, stage by stage, or case by case. Keep cells short; put explanations in bullets under the table.
+- **Keep paragraphs to about three sentences.** The write tool rejects paragraphs over 60 words, list items over 40, table cells over 25, and captions, evidence summaries, check summaries and limits over 40.
+- **Bold** only the one fact a reader must not miss in a section.
+
+Write in plain words. Define a term the first time it appears. Prefer precise verbs to confidence slogans. Do not add generic homework, a citation-count score, or a global confidence badge.
+
+## Name things by what they say, not their number
+
+A reader does not know what "ADR-0028", "PC-32", "#123" or "cf2e7b1" means. Treat these like commit hashes: keep them out of the prose.
+
+- Declare each decision record, design document, ticket or commit you cite in `references`, with a `label` that states the decision or change in words. Example: `{id: "regime-in-newton", label: "the decision to choose the nozzle regime inside Newton", path: "docs/adr/0028-nozzle-regime-inside-newton.md", identifier: "ADR-0028", record_id: "r4"}`. For a commit, give `commit` in place of `path`, with a label such as "the change that seeds the throat in its implied regime".
+- In prose, write `[[regime-in-newton]]`, or `[[regime-in-newton|this decision]]` to choose the words. The page links it to the file or commit at the scope head. The identifier appears only in the link's tooltip and in the References appendix.
+- If a sentence still needs the decision's content, say it: "the regime decision measured 65 Newton steps for take-off under the old loop", not "ADR-0028 says 65 steps".
+- The write tool rejects bare identifiers in prose and labels that are only a number. Identifiers inside `code` spans, math and verbatim evidence quotes are left alone.
+
 ## Format prose for reading
 
-Prose fields (summary, section text, evidence summaries, captions, checks, limits) accept a small Markdown subset. Use it, because the reader sees rendered output, not source:
+Prose fields accept a small Markdown subset. Use it, because the reader sees rendered output, not source:
 
 - **Math in LaTeX**, rendered by KaTeX: `$M_8 = 1$` inline, and `$$ ... $$` on its own lines for a display equation. Write symbols with subscripts and Greek letters in LaTeX (`$P_0$`, `$\pi^*$`, `$\sqrt{a^2+b^2}$`), not Unicode look-alikes such as "P₀" or "√". Escape a literal dollar sign as `\$`.
-- **Pipe tables** for comparisons such as before/after counts, stage-by-stage behavior, or parameter choices. Separator row `|---|---|`; end a column with `:` to right-align numbers.
-- Bullet or numbered lists for parallel items, `` `code` `` for identifiers, `**bold**` for the one thing a reader must not miss.
+- **Pipe tables**: separator row `|---|---|`; end a column with `:` to right-align numbers.
+- Bullet and numbered lists, `` `code` `` for identifiers in source, `**bold**`, and `[[reference]]` links.
 
-No links, images or raw HTML in prose. Cite records through evidence instead.
-
-Write full sentences for explanations. Short fragments are fine for labels and table cells. Prefer precise verbs to confidence slogans. Remove repeated detail rather than compressing an explanation into unexplained jargon. Do not add generic homework, a citation-count score, or a global confidence badge.
+No other links, images or raw HTML in prose. Cite records through evidence.
 
 ## Use visuals when they explain something
 
@@ -86,6 +105,7 @@ Read `../../docs/report-format.md` relative to this skill directory when you nee
 - `checks`: optional `{label, status, summary, record_ids?}` entries. Status is `passed`, `failed`, `blocked`, `not-run`, or `inspected`. Every status except `not-run`, including `blocked`, requires at least one executed or inspected record. Cite refused commands in limits or diagram navigation, not as check or article evidence.
 - `limits`: optional `{text, record_id?}` entries. State important uncertainty once, without repeating it across several categories.
 - `changes`: optional `{path, note, lines?, record_id?}` entries. Use one actual repository-relative path per entry, not a glob or a list packed into a string. Include changed tests and tolerances when material to the result.
+- `references`: optional `{id, label, path? | commit?, identifier?, record_id?}` entries for decisions, documents, tickets and commits cited in prose as `[[id]]`. The label states the decision in words.
 - `visuals`: optional `{record_id, file?, kind, caption, alt?, section_id?, links?}` entries. `kind` is `plot` or `diagram`. Placement defaults to `overview`; otherwise name a section ID. The renderer respects the requested placement.
 
 Empty optional arrays are fine. The reader can expand the changed files, scope commits, and complete exact command log. Do not repeat commands in article prose. Never invent output, numbers, units, source lines, or facts. Keep observations separate from explanations of their cause.

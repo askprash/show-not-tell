@@ -248,6 +248,8 @@ test("figkit diagrams are linted, outlined, previewed, and rejected with finding
 		rmSync(outlinedPath);
 		await assert.rejects(write({ ...payload("r1"), visuals: [visual("r1")] }), /outlined copy .* unavailable/);
 		writeFileSync(outlinedPath, saved);
+		// A literal [[id]] in code is not a citation and needs no declaration.
+		await write({ ...payload("r1"), sections: [{ id: "behavior", title: "Behavior", text: "Cite with `[[id]]`." }] });
 		// At most four figures per record; the rest are reported, not processed.
 		const many = await record({ command: "true", why: "Too many figures", produces: "a.svg, b.svg, c.svg, d.svg, e.svg, f.svg" });
 		assert.match(many.details.produces_missing, /e\.svg skipped: at most 4 figures per record.*f\.svg skipped/);
@@ -346,6 +348,50 @@ test("mode parsing preserves scope punctuation, invalid modes do not activate, c
 	assert.deepEqual(log.map((r) => r.id), ["r0", "r1"]);
 	assert.equal(log[1].stdout, "reset\n");
 	process.env.WALKTHROUGH_MAX_RECORDS = "20";
+});
+
+test("prose readability: bare identifiers, walls of text, and declared references resolved to commits", async () => {
+	const saved = cwd;
+	cwd = mkdtempSync(join(tmpdir(), "wt-refs-"));
+	const g = (args) => execSync(`git -c user.name=t -c user.email=t@t -c commit.gpgsign=false ${args}`, { cwd, encoding: "utf8" }).trim();
+	try {
+		g("init -q"); execSync("mkdir -p docs/adr", { cwd }); writeFileSync(join(cwd, "docs/adr/0028-regime.md"), "# Regime inside Newton\n"); g("add ."); g("commit -qm 'Add decision'");
+		g("remote add origin https://github.com/owner/repo.git");
+		const head = g("rev-parse HEAD");
+		handlers.get("session_start")({}, ctx());
+		await record({ command: "cat docs/adr/0028-regime.md", why: "Read the decision" });
+		const base = payload("r1");
+		const withText = (text, extra = {}) => ({ ...base, sections: [{ ...base.sections[0], text }], ...extra });
+		for (const [text, err] of [
+			["ADR-0028 chose this.", /bare identifier "ADR-0028"/],
+			["See PC-32 and ADR008.", /"PC-32", "ADR008"/],
+			[`Commit ${head.slice(0, 7)} did it.`, /bare identifier/],
+			[Array(70).fill("word").join(" "), /paragraph 1 has 70 words/],
+			["It does three things: (1) one, (2) two, (3) three.", /numbered list/],
+			[`- ${Array(45).fill("x").join(" ")}`, /list item has 45 words/],
+			["As [[nope]] says.", /\[\[nope\]\] is not a declared reference/],
+		]) await assert.rejects(write(withText(text)), err, text);
+		await assert.rejects(write({ ...base, summary: "Fixes PC-32." }), /summary: bare identifier "PC-32"/);
+		await assert.rejects(write(withText("ok", { references: [{ id: "adr", label: "ADR-0028", path: "docs/adr/0028-regime.md" }] })), /must state the decision/);
+		await assert.rejects(write(withText("ok", { references: [{ id: "adr", label: "x" }] })), /give a path or a commit/);
+		const refs = [
+			{ id: "regime", label: "the decision to choose the nozzle regime inside Newton", path: "docs/adr/0028-regime.md", identifier: "ADR-0028", record_id: "r1" },
+			{ id: "add", label: "the change that added it", commit: "HEAD" },
+			{ id: "gone", label: "the deleted loop", path: "docs/missing.md" },
+		];
+		await assert.rejects(write(withText("See [[loop]].", { references: [{ id: "loop", label: "[[loop]]", path: "docs/adr/0028-regime.md" }] })), /cannot contain \[\[/);
+		const page = await write(withText("Per [[regime]], Newton picks the regime. See [[add|this commit]] and [[gone]].\n\n- short bullet\n- another bullet", { references: refs }));
+		const html = readFileSync(page.details.path, "utf8");
+		assert.match(html, new RegExp(`<a class="ref" href="https://github.com/owner/repo/blob/${head}/docs/adr/0028-regime.md" title="ADR-0028 · docs/adr/0028-regime.md · ${head.slice(0, 12)}" rel="noreferrer">the decision to choose the nozzle regime inside Newton</a>`));
+		assert.match(html, new RegExp(`<a class="ref" href="https://github.com/owner/repo/commit/${head}"[^>]*>this commit</a>`));
+		assert.match(html, /<a class="ref" href="#ref-gone"/);
+		assert.match(html, /<details id="references"><summary>References<\/summary>/);
+		assert.match(html, /<li id="ref-gone">[^]*?docs\/missing.md is not a committed file/);
+		assert.ok(rendered().extras.autoLimits.some((l) => /deleted loop.*not a committed file/.test(l.text)));
+		assert.match(html, /<ul><li>short bullet<\/li><li>another bullet<\/li><\/ul>/);
+		const article = html.slice(html.indexOf("<section id=\"behavior\">"), html.indexOf("</section>", html.indexOf("<section id=\"behavior\">")));
+		assert.doesNotMatch(article.replace(/title="[^"]*"/g, "").replace(/href="[^"]*"/g, ""), /ADR-0028|[0-9a-f]{12}/);
+	} finally { rmSync(cwd, { recursive: true, force: true }); cwd = saved; }
 });
 
 test("scope resolution uses immutable local commits and canonical credential-free GitHub/GitLab URLs", async () => {

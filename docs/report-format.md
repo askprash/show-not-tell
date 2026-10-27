@@ -22,11 +22,24 @@ Both modes are report-only. Both resolve Git scope and retain recorded sources. 
 - `visuals` name image files captured by a record. The tool checks the captured file's hash before embedding it. `section_id` defaults to `overview`; otherwise it must name an authored section. The first visual is not silently moved to another section. A plot explains a numerical result; a diagram explains structure or reasoning. Captions explain what the image means, not how its command was launched.
 
 
+## References and readability
+
+`references` declare decision records, documents, tickets and commits that prose cites as `[[id]]` or `[[id|words]]`. A `path` resolves to the file at the scope head; a `commit` resolves to its hash. With a supported remote, the citation links to that immutable URL; otherwise it links to the References appendix. The reader sees the `label`, which states the decision or change. The `identifier` (such as ADR-0028) and the hash appear only in the link title and the appendix. An unresolvable reference is listed as a limit.
+
+The write tool rejects prose that a reader without session context cannot follow:
+
+- bare identifiers in prose: ticket and decision numbers (`ADR-0028`, `PC-32`, `ADR008`, `#123`) and commit hashes. Code spans, math, `[[references]]` and verbatim evidence quotes are not checked. Standard names such as UTF-8, ISO-9001 and SHA-256 are allowed;
+- reference labels that are only a number;
+- paragraphs over 60 words, list items over 40, table cells over 25, and inline "(1) … (2) …" enumerations;
+- captions, evidence summaries, check summaries, limits and change notes over 40 words, and titles or labels over 14.
+
+Each finding names the field and what to write instead.
+
 ## Prose markup
 
 Authored prose fields (summary, section text and titles, evidence summaries, captions, check and limit text, change notes) use a closed Markdown subset: paragraphs, pipe tables with optional column alignment, bullet and numbered lists, fenced code, `` `code` ``, `**bold**`, `$...$` inline math and `$$...$$` display math. `\$` is a literal dollar sign, and `$5 and $10` stays text (a closing `$` before a digit or after a space does not close math). Prose without markup renders as escaped paragraphs.
 
-There are no links, images, raw HTML or attributes. Everything else is escaped. Math is rendered to HTML and MathML by KaTeX at write time with `trust: false`, so `\href`, `\url`, `\includegraphics` and `\html*` commands produce no active output. Invalid LaTeX is shown in an error color and does not stop the write. When a page contains math, the KaTeX stylesheet and its WOFF2 fonts are inlined as data URLs, so the page stays offline. Pages without math do not include them.
+Apart from declared references, which link only to tool-resolved repository URLs or local anchors, there are no links, images, raw HTML or attributes. Everything else is escaped. Math is rendered to HTML and MathML by KaTeX at write time with `trust: false`, so `\href`, `\url`, `\includegraphics` and `\html*` commands produce no active output. Invalid LaTeX is shown in an error color and does not stop the write. When a page contains math, the KaTeX stylesheet and its WOFF2 fonts are inlined as data URLs, so the page stays offline. Pages without math do not include them.
 
 Runtime-generated text (automatic limits, paths, metadata, recorded output) is never parsed as markup.
 

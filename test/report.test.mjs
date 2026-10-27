@@ -304,15 +304,29 @@ test('math renders with KaTeX offline; untrusted commands do not create links', 
 });
 
 
-test('table cells keep currency, math, escaped pipes and extra cells', async () => {
-  const { prose } = await import('../extensions/markup.ts');
-  const table = prose('| s | cost | r |\n|---|---|---|\n| a | $5 | Passed |\n| a \\| b | $x$ | four | extra |');
-  assert.match(table, /<td>a<\/td><td>\$5<\/td><td>Passed<\/td>/);
+test('review regressions: reference labels cannot recurse; table cells keep citations, currency and escaped pipes', async () => {
+  const { prose, withReferences } = await import('../extensions/markup.ts');
+  const loop = (id) => ({ href: `#ref-${id}`, label: id === 'a' ? '[[b]]' : '[[a]]', title: 't' });
+  const html = withReferences(loop, () => prose('see [[a]], [[b]] and [[a|[[a]]]]'));
+  assert.match(html, /<a class="ref" href="#ref-a" title="t">\[\[b\]\]<\/a>/);
+  const table = withReferences(() => ({ href: '#x', label: 'L', title: 't' }), () => prose('| s | cost | r |\n|---|---|---|\n| [[d|this decision]] | $5 | Passed |\n| a \\| b | $x$ | four | extra |'));
+  assert.match(table, /<td><a class="ref" href="#x" title="t">this decision<\/a><\/td><td>\$5<\/td><td>Passed<\/td>/);
   assert.match(table, /<td>a \| b<\/td><td><span class="katex">/);
   assert.match(table, /<td>four<\/td><td>extra<\/td>/, 'extra cells are kept, not dropped');
 });
 
-test('outline failures stay visible in the figure record', async () => {
+test('review regressions: prose lint exempts inline code and counts whole list items', async () => {
+  const { bareIdentifiers, density } = await import('../extensions/prose-lint.ts');
+  assert.deepEqual(bareIdentifiers('The parser recognizes `ADR-0028` and `abc1234`.'), []);
+  assert.deepEqual(bareIdentifiers('An unmatched ` then ADR-0028'), ['ADR-0028']);
+  assert.match(density(`- short\n  ${Array(100).fill('w').join(' ')}`).join(), /list item has 101 words/);
+  assert.match(density('| a | b |\n|---|---|\n| x | y | z |').join(), /row 1 has 3 cells but the header has 2/);
+  assert.deepEqual(density('| a | b |\n|---|---|\n| [[r|two words]] | $5 |'), []);
+});
+
+test('review regressions: literal [[id]] in code is not a citation; outline failures stay visible', async () => {
+  const { referenceIds } = await import('../extensions/prose-lint.ts');
+  assert.deepEqual(referenceIds('The syntax is `[[example]]`.\n\n```\n[[fenced]]\n```\n\n$[[m]]$ and [[real|words]] and [[other]]'), ['real', 'other']);
   const f = fixture();
   f.log[0].figures = [{ path: '.walkthrough/figs/R8-x.svg', sha256: 'a'.repeat(64), bytes: 10, lint: [], outline_failed: 'rsvg-convert: not found' }];
   assert.match(render(f), /<span class="warning">Text outlining failed: rsvg-convert: not found<\/span>/);
