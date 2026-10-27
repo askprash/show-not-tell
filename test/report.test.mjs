@@ -312,3 +312,8 @@ test('table cells keep currency, math, escaped pipes and extra cells', async () 
   assert.match(table, /<td>four<\/td><td>extra<\/td>/, 'extra cells are kept, not dropped');
 });
 
+test('outline failures stay visible in the figure record', async () => {
+  const f = fixture();
+  f.log[0].figures = [{ path: '.walkthrough/figs/R8-x.svg', sha256: 'a'.repeat(64), bytes: 10, lint: [], outline_failed: 'rsvg-convert: not found' }];
+  assert.match(render(f), /<span class="warning">Text outlining failed: rsvg-convert: not found<\/span>/);
+});

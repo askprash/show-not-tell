@@ -33,7 +33,7 @@ Omit `--mode` to use verification. A walkthrough stays focused on the named chan
 
 ## Read the page
 
-The page starts with a descriptive title, scope links, and a short bottom line. Its sections follow the subject rather than a fixed audit form. Equations render with KaTeX, and comparisons render as tables. Relevant plots and linked flowcharts can explain results and code paths. Important failed checks and limits remain visible.
+The page starts with a descriptive title, scope links, and a short bottom line. Its sections follow the subject rather than a fixed audit form. Equations render with KaTeX, and comparisons render as tables. Diagrams are drawn with the bundled figkit library, linted, and embedded with their text converted to outlines. Plots can be embedded from recorded commands. Important failed checks and limits remain visible.
 
 Changed files, commit details, and exact commands are expandable. Each command record starts with a short action description. Long commands keep their line breaks inside the record rather than appearing in the article, captions, or collapsed headings. Readable output views retain the recorded text for inspection.
 
@@ -43,7 +43,7 @@ Output is written to `.walkthrough/<title>.html`, with the evidence log in `.wal
 
 A visual is optional. Use a plot for numerical behavior, a flowchart for structure or reasoning, and a table when that is easier to read. There is no required plot count or automatic file-churn chart.
 
-Diagram files can be generated with the svg-figs skill when it is available, or another diagram generator. The renderer does not require a machine-local Python library. It embeds SVGs as non-active images. Validated HTML link regions connect diagram nodes to article sections and evidence records, with a text-link alternative for keyboard access.
+Diagrams use the bundled `figkit/` library, adapted from the svg-figs skill. It needs uv, XeLaTeX with dvisvgm, rsvg-convert, and the STIX Two Text, IBM Plex Mono and New Computer Modern Math fonts; run `figkit/scripts/check-env.sh` to see what is missing. Without these tools, walkthroughs still render, using tables in place of diagrams. Every image, including figkit SVG, is embedded as a non-active image. Validated HTML link regions connect diagram nodes to article sections and evidence records, with a text-link alternative for keyboard access.
 
 See [the report format](docs/report-format.md) for the write payload and diagram link coordinates.
 

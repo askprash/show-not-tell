@@ -22,7 +22,7 @@ registerHooks({
 	},
 });
 
-const { default: walkthrough, prepareWriteArgs, parseCommandArgs, repositoryUrl, resolveScope, writesWalkthroughDir, ALLOWED_TOOLS } = await import("../extensions/walkthrough.ts");
+const { default: walkthrough, prepareWriteArgs, parseCommandArgs, repositoryUrl, resolveScope, writesWalkthroughDir, ALLOWED_TOOLS, FIGKIT_DIR } = await import("../extensions/walkthrough.ts");
 
 const tools = new Map();
 const handlers = new Map();
@@ -212,6 +212,45 @@ test("visual preparation validates capture hashes, section placement, links and 
 			await assert.rejects(write({ ...payload("r1"), ...patch }), /unknown record_id "r6"/);
 		writeFileSync(join(cwd, r.details.figures[0].path), "tampered");
 		await assert.rejects(write({ ...payload("r1"), visuals: [visual] }), /changed after it was recorded/);
+	} finally { rmSync(cwd, { recursive: true, force: true }); cwd = saved; }
+});
+
+const figkitReady = execSync(`"${FIGKIT_DIR}/scripts/check-env.sh" >/dev/null 2>&1 && echo ok || true`, { encoding: "utf8" }).trim() === "ok";
+test("figkit diagrams are linted, outlined, previewed, and rejected with findings", { skip: !figkitReady && "figkit tools or fonts not installed" }, async () => {
+	const saved = cwd;
+	cwd = mkdtempSync(join(tmpdir(), "wt-figkit-"));
+	handlers.get("session_start")({}, ctx());
+	process.env.WALKTHROUGH_MAX_RECORDS = "20";
+	try {
+		const script = (label) => `from svgfig import Figure\nf = Figure()\na = f.node(14, 14, ["Direct solve", "$M_8 = 1$"], cat=0)\nb = f.node(a.x1 + 60, 14, ["${label}"], cat=1)\nf.arrow(a.r, b.l)\nf.save(".walkthrough/figs/ladder.svg", png=False)\n`;
+		writeFileSync(join(cwd, "good.py"), script("Retry"));
+		const good = await record({ command: `mkdir -p .walkthrough/figs && "$WALKTHROUGH_FIGKIT/run.sh" good.py`, why: "Draw the fallback ladder", produces: ".walkthrough/figs/ladder.svg", timeout_s: 120 });
+		const fig = good.details.figures[0];
+		assert.deepEqual(fig.lint, []);
+		assert.ok(fig.outlined && existsSync(join(cwd, fig.outlined.path)));
+		assert.doesNotMatch(readFileSync(join(cwd, fig.outlined.path), "utf8"), /<text/);
+		assert.equal(good.content[1]?.type, "image");
+		assert.match(good.content[0].text, /figkit lint: 0 findings/);
+		writeFileSync(join(cwd, "bad.py"), script("We leverage a seamless retry"));
+		const bad = await record({ command: `"$WALKTHROUGH_FIGKIT/run.sh" bad.py`, why: "Draw a figure with banned words", produces: ".walkthrough/figs/ladder.svg", timeout_s: 120 });
+		assert.ok(bad.details.figures[0].lint.some((l) => /words: 'leverage'/.test(l)));
+		const visual = (record_id) => ({ record_id, kind: "diagram", caption: "Fallbacks.", section_id: "behavior" });
+		await assert.rejects(write({ ...payload("r1"), visuals: [visual("r2")] }), /lint findings/);
+		const page = await write({ ...payload("r1"), visuals: [visual("r1")] });
+		const src = rendered().extras.visuals[0].src;
+		assert.equal(Buffer.from(src.split(",")[1], "base64").toString(), readFileSync(join(cwd, fig.outlined.path), "utf8"));
+		assert.match(readFileSync(page.details.path, "utf8"), /figkit lint: 0 findings/);
+		// The outlined copy is held to the same integrity check as the original.
+		const outlinedPath = join(cwd, fig.outlined.path);
+		const saved = readFileSync(outlinedPath);
+		writeFileSync(outlinedPath, "<svg/>");
+		await assert.rejects(write({ ...payload("r1"), visuals: [visual("r1")] }), /outlined copy .* changed/);
+		rmSync(outlinedPath);
+		await assert.rejects(write({ ...payload("r1"), visuals: [visual("r1")] }), /outlined copy .* unavailable/);
+		writeFileSync(outlinedPath, saved);
+		// At most four figures per record; the rest are reported, not processed.
+		const many = await record({ command: "true", why: "Too many figures", produces: "a.svg, b.svg, c.svg, d.svg, e.svg, f.svg" });
+		assert.match(many.details.produces_missing, /e\.svg skipped: at most 4 figures per record.*f\.svg skipped/);
 	} finally { rmSync(cwd, { recursive: true, force: true }); cwd = saved; }
 });
 

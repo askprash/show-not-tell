@@ -5,6 +5,12 @@ export interface FigureFile {
   path: string;
   sha256: string;
   bytes: number;
+  /** figkit lint findings for an SVG made with the bundled library; empty means clean. */
+  lint?: string[];
+  /** Copy of a figkit SVG with text converted to outlines; this is what the page embeds. */
+  outlined?: { path: string; sha256: string; bytes: number };
+  /** Why outlining a figkit SVG failed; such a figure cannot be embedded. */
+  outline_failed?: string;
 }
 
 export interface EvidenceRecord {

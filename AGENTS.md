@@ -8,7 +8,7 @@ This package produces readable, source-linked walkthroughs for people who were n
 - Keep important failures and unverified claims visible. Do not require a fixed number of sections, plots, tests, or diagrams.
 - Preserve the recording tools' evidence-reference, quote, figure-integrity, budget, timeout, worktree-cleanup, and working-tree checks.
 - Reports must work offline. Never inline untrusted active SVG or allow executable URLs in report links.
-- Use the svg-figs skill when authoring diagram assets. Do not make that local skill a required runtime dependency of the npm package.
+- Diagrams use the bundled `figkit/` (adapted from the svg-figs skill). Keep it self-contained: no dependency on `~/.pi/agent/skills`. Keep its lint and the outline-and-hash step in the record tool.
 - Keep local paths, credentials, generated reports, and private task data out of Git and the npm tarball.
 - If `.backlog/` exists and the `backlog` CLI is installed, read `backlog instructions overview`. Modify task records only through that CLI.
 

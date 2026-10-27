@@ -41,12 +41,14 @@ const DEFAULT_TIMEOUT_S = 60;
 const MAX_TIMEOUT_S = 120;
 const KILL_GRACE_MS = 2000;
 const MAX_FIG_BYTES = 5 * 1024 * 1024;
+const MAX_FIGS_PER_RECORD = 4;
 export const ALLOWED_TOOLS = ["walkthrough_record", "walkthrough_write"];
 const WRITE_KEYS = ["title", "mode", "scope", "summary", "sections"];
 const OPTIONAL_ARRAYS = ["checks", "limits", "changes", "visuals"];
 
 const HERE = typeof __dirname === "string" ? __dirname : dirname(fileURLToPath(import.meta.url));
 const SKILL_FILE = resolve(HERE, "..", "skills", "walkthrough", "SKILL.md");
+export const FIGKIT_DIR = resolve(HERE, "..", "figkit");
 
 // ---------- command classification ----------
 
@@ -141,7 +143,7 @@ function runShell(command: string, cwd: string, timeoutS: number, signal?: Abort
 		// pipefail: `pytest | tail` must not report exit 0 when pytest failed.
 		const child = spawn("bash", ["-o", "pipefail", "-c", command], {
 			cwd,
-			env: { ...process.env, WALKTHROUGH: "1" },
+			env: { ...process.env, WALKTHROUGH: "1", WALKTHROUGH_FIGKIT: FIGKIT_DIR },
 			stdio: ["ignore", "pipe", "pipe"],
 			detached: true,
 		});
@@ -257,8 +259,46 @@ function makeWorktree(cwd: string, ref: string, overlay: string[]): Worktree {
 	return { dir, cwd: join(dir, sub), sha, top, cleanup };
 }
 
+function hashed(projectCwd: string, path: string): FigureFile {
+	const buf = readFileSync(path);
+	return { path: relative(projectCwd, path), sha256: sha256(buf), bytes: buf.length };
+}
+
+/** Remaining milliseconds of the walkthrough budget; figure processing never runs past it. */
+type Deadline = () => number;
+
+// Bounded by the remaining budget; dest is an absolute path the tool created, never agent text.
+function bounded(cmd: string, args: string[], deadline: Deadline, cap: number, extra: object = {}) {
+	const ms = Math.min(cap, deadline());
+	if (ms < 1000) return { status: null, stdout: "", stderr: "", error: new Error("walkthrough time budget used up") } as ReturnType<typeof spawnSync>;
+	return spawnSync(cmd, args, { encoding: "utf8", timeout: ms, killSignal: "SIGKILL", ...extra });
+}
+
+// A figkit SVG is linted with the bundled checker, and its text is converted to outlines so the
+// page shows the measured layout even where its fonts are not installed. Both run on the copy.
+function prepareSvg(dest: string, projectCwd: string, figure: FigureFile, deadline: Deadline): FigureFile {
+	const text = readFileSync(dest, "utf8");
+	if (!/<svg\b[^>]*\bdata-svgfig=/.test(text)) return figure;
+	const lint = bounded(join(FIGKIT_DIR, "lint.sh"), [dest], deadline, 60_000);
+	const lines = `${lint.stdout ?? ""}`.split("\n").filter((l) => /^ {2}\S/.test(l)).map((l) => l.trim());
+	figure.lint = lint.status === 0 || lines.length ? lines : [`lint could not run: ${(`${lint.stderr ?? ""}` || lint.error?.message || "unknown error").trim().split("\n").at(-1)}`];
+	const outlined = dest.replace(/\.svg$/i, ".outlined.svg");
+	const conv = bounded("rsvg-convert", ["-f", "svg", "-o", outlined, "--", dest], deadline, 30_000);
+	if (conv.status === 0 && existsSync(outlined)) figure.outlined = hashed(projectCwd, outlined);
+	else figure.outline_failed = (`${conv.stderr ?? ""}` || conv.error?.message || "rsvg-convert failed").trim().split("\n").at(-1);
+	return figure;
+}
+
+// A PNG the agent can look at in the tool result: the figure itself, or a raster of an SVG.
+function previewPng(projectCwd: string, figure: FigureFile, deadline: Deadline): Buffer | undefined {
+	const abs = join(projectCwd, figure.path);
+	if (abs.toLowerCase().endsWith(".png")) return statSync(abs).size <= MAX_FIG_BYTES ? readFileSync(abs) : undefined;
+	const r = bounded("rsvg-convert", ["-z", "1.25", "--", abs], deadline, 30_000, { encoding: "buffer", maxBuffer: MAX_FIG_BYTES });
+	return r.status === 0 && r.stdout?.length ? (r.stdout as Buffer) : undefined;
+}
+
 // Copy a file the command was expected to write into .walkthrough/figs/<id>-<name>, with its hash.
-function captureFigure(id: string, produces: string, runCwd: string, projectCwd: string, startedMs: number): { figure?: FigureFile; missing?: string } {
+function captureFigure(id: string, produces: string, runCwd: string, projectCwd: string, startedMs: number, deadline: Deadline): { figure?: FigureFile; missing?: string } {
 	const src = resolve(runCwd, produces);
 	if (!existsSync(src)) return { missing: `${produces} was not written` };
 	const ext = extname(src).toLowerCase();
@@ -272,7 +312,8 @@ function captureFigure(id: string, produces: string, runCwd: string, projectCwd:
 	ensureGitignore(join(projectCwd, OUT_DIR));
 	const dest = join(destDir, `${id}-${basename(src)}`);
 	writeFileSync(dest, buf);
-	return { figure: { path: relative(projectCwd, dest), sha256: sha256(buf), bytes: buf.length } };
+	const figure: FigureFile = { path: relative(projectCwd, dest), sha256: sha256(buf), bytes: buf.length };
+	return { figure: ext === ".svg" ? prepareSvg(dest, projectCwd, figure, deadline) : figure };
 }
 
 // ---------- working-tree snapshots ----------
@@ -544,7 +585,8 @@ export default function walkthrough(pi: ExtensionAPI) {
 			"Run one shell command for the walkthrough and record the command and its real output in the evidence log. " +
 			"During a walkthrough this is the only way to run anything, including reading files (git show, sed -n, grep). " +
 			`Budget: ${maxRecords()} commands, 60 s each by default, 5 minutes in total; calls past the budget are refused and listed under Not verified. ` +
-			`Set produces to the .png/.svg file(s) the command writes under ${FIG_DIR}/ to use them as figures.`,
+			`Set produces to the .png/.svg file(s) the command writes under ${FIG_DIR}/ to use them as figures; the result includes a PNG preview. ` +
+			"Commands see $WALKTHROUGH_FIGKIT, the bundled diagram library: run a figure script with \"$WALKTHROUGH_FIGKIT/run.sh\" script.py.",
 		promptSnippet: "walkthrough_record: run a command and record its output as walkthrough evidence",
 		parameters: RecordParams,
 		executionMode: "sequential",
@@ -604,8 +646,11 @@ export default function walkthrough(pi: ExtensionAPI) {
 					mapped = toRun !== params.command;
 				}
 				res = await runShell(toRun, runCwd, timeoutS, signal);
-				for (const one of (params.produces ?? "").split(",").map((x) => x.trim()).filter(Boolean)) {
-					const c = captureFigure(id, one, runCwd, cwd, startedMs);
+				const deadline: Deadline = () => budgetMs() - (Date.now() - firstStart);
+				const wanted = (params.produces ?? "").split(",").map((x) => x.trim()).filter(Boolean);
+				for (const extra of wanted.slice(MAX_FIGS_PER_RECORD)) missingFigs.push(`${extra} skipped: at most ${MAX_FIGS_PER_RECORD} figures per record`);
+				for (const one of wanted.slice(0, MAX_FIGS_PER_RECORD)) {
+					const c = captureFigure(id, one, runCwd, cwd, startedMs, deadline);
 					if (c.figure) figs.push(c.figure);
 					if (c.missing) missingFigs.push(c.missing);
 				}
@@ -629,17 +674,26 @@ export default function walkthrough(pi: ExtensionAPI) {
 			};
 			appendRecord(cwd, rec);
 			const left = maxRecords() - (ran + 1);
-			const timeLeft = Math.max(0, Math.floor((budgetMs() - (Date.now() - firstStart)) / 1000));
 			const status = res.timed_out ? `timed out after ${timeoutS} s` : `exit ${res.exit}`;
 			const figLine =
-				figs.map((f) => `figure: ${f.path} (${f.bytes} bytes, sha256 ${f.sha256.slice(0, 16)}…); cite it in walkthrough_write visuals as record_id ${id}, file ${basename(f.path)}\n`).join("") +
+				figs.map((f) => `figure: ${f.path} (${f.bytes} bytes, sha256 ${f.sha256.slice(0, 16)}…); cite it in walkthrough_write visuals as record_id ${id}, file ${basename(f.path)}\n` +
+					(f.lint ? (f.lint.length ? `figkit lint: ${f.lint.length} findings. Fix them and record the figure again; a diagram with findings is rejected.\n${f.lint.map((l) => `  ${l}`).join("\n")}\n` : "figkit lint: 0 findings\n") : "") +
+					(f.outline_failed ? `text outlining failed (${f.outline_failed}); this diagram cannot be embedded until it succeeds\n` : "") +
+					"Look at the preview below for crossing arrows, poor alignment and unused space; the lint cannot see layout.\n").join("") +
 				missingFigs.map((m) => `figure not captured, because ${m}\n`).join("");
 			const text =
 				`${id} · ${status} · ${(res.ms / 1000).toFixed(1)} s${clampNote}${wt ? ` · at ${params.at_ref} (${wt.sha.slice(0, 7)})` : ""}\n` +
 				figLine +
-				`budget left: ${left} records, ${timeLeft} s\n` +
+				"budget left: BUDGET\n" +
 				`--- stdout ---\n${out.text || "(empty)"}\n--- stderr ---\n${err.text || "(empty)"}`;
-			return { content: [{ type: "text" as const, text }], details: rec };
+			const previews = figs.flatMap((f) => {
+				try {
+					const png = previewPng(cwd, f, () => budgetMs() - (Date.now() - firstStart));
+					return png ? [{ type: "image" as const, data: png.toString("base64"), mimeType: "image/png" }] : [];
+				} catch { return []; }
+			});
+			const timeLeft = Math.max(0, Math.floor((budgetMs() - (Date.now() - firstStart)) / 1000));
+			return { content: [{ type: "text" as const, text: text.replace("budget left: BUDGET", `budget left: ${left} records, ${timeLeft} s`) }, ...previews], details: rec };
 		},
 	});
 
@@ -723,6 +777,15 @@ export default function walkthrough(pi: ExtensionAPI) {
 					if (statSync(abs).size <= MAX_FIG_BYTES) buf = readFileSync(abs);
 				} catch { /* unavailable images fail integrity validation below */ }
 				if (!buf || buf.length !== chosen.bytes || sha256(buf) !== chosen.sha256) { problems.push(`visuals[${i}]: the copy of ${v.record_id}'s figure changed after it was recorded or is unavailable`); return; }
+				if (v.kind === "diagram" && chosen.lint?.length) { problems.push(`visuals[${i}]: ${basename(chosen.path)} has ${chosen.lint.length} figkit lint findings; fix the figure and record it again`); return; }
+				if (chosen.lint && !chosen.outlined) { problems.push(`visuals[${i}]: ${basename(chosen.path)} could not be converted to outlines${chosen.outline_failed ? ` (${chosen.outline_failed})` : ""}; record it again`); return; }
+				// figkit diagrams embed only the outlined copy, after the same integrity check as the original.
+				if (chosen.outlined) {
+					let out: Buffer | undefined;
+					try { out = readFileSync(join(cwd, chosen.outlined.path)); } catch { /* reported below */ }
+					if (!out || out.length !== chosen.outlined.bytes || sha256(out) !== chosen.outlined.sha256) { problems.push(`visuals[${i}]: the outlined copy of ${v.record_id}'s figure changed after it was recorded or is unavailable`); return; }
+					buf = out;
+				}
 				visuals.push({ ...v, src: `data:${chosen.path.toLowerCase().endsWith(".svg") ? "image/svg+xml" : "image/png"};base64,${buf.toString("base64")}` });
 			});
 			if (problems.length) throw new Error(`walkthrough_write rejected:\n- ${problems.join("\n- ")}\nValid record ids: ${[...valid.keys()].join(", ") || "(none recorded)"}.`);
@@ -757,6 +820,8 @@ export default function walkthrough(pi: ExtensionAPI) {
 				else if (r.timed_out) reasons.push("Command timed out.");
 				else if (!r.snapshot && r.exit !== 0) reasons.push(r.exit == null ? "Command could not run." : `Command exited with status ${r.exit}.`);
 				if (r.produces_missing) reasons.push(`Expected image unavailable: ${r.produces_missing}.`);
+				const unoutlined = (r.figures ?? []).filter((f) => f.outline_failed);
+				if (unoutlined.length) reasons.push(`Diagram could not be converted to outlines and was not embedded: ${unoutlined.map((f) => `${basename(f.path)} (${f.outline_failed})`).join("; ")}.`);
 				if (reasons.length) autoLimits.push({ text: `${r.why}: ${reasons.join(" ")}`, record_id: r.id });
 			}
 

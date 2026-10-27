@@ -1,0 +1,63 @@
+# Words that must not appear in figure text. One word or phrase per line.
+# Use the word on the right of the comment, or say the fact directly.
+
+# Vague or inflated verbs
+utilize        # use
+leverage       # use
+facilitate     # help, let
+enable         # let
+empower
+unlock
+harness
+streamline
+delve
+elevate
+showcase       # show
+commence       # start
+endeavor
+ensure         # make sure; or state the check
+
+# Hype and filler
+seamless
+seamlessly
+robust         # say what it survives
+powerful
+cutting-edge
+state-of-the-art
+innovative
+revolutionary
+game-changer
+holistic
+synergy
+comprehensive
+crucial        # say why it matters
+vital
+key            # say what it does; keep for "API key"
+very
+really
+basically
+essentially
+simply
+just
+clearly
+obviously
+truly
+actually
+various
+numerous
+myriad
+plethora
+landscape
+ecosystem
+journey
+paradigm
+
+# Phrases
+in order to         # to
+a number of         # some, or the number
+due to the fact     # because
+at this point in time
+it is important to
+best practices
+under the hood
+deep dive

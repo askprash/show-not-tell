@@ -49,9 +49,24 @@ Write full sentences for explanations. Short fragments are fine for labels and t
 
 ## Use visuals when they explain something
 
-A plot can explain numerical behavior. A flowchart can explain an algorithm, code path, dependency, or chain of reasoning. Use neither as decoration. A compact table may be better than another plot. Do not add a file-churn chart just because a diffstat is available.
+A reader takes in a small diagram faster than a paragraph. Whenever a section describes a sequence, a decision, a fallback chain, a data flow, or a before/after change in structure, draw a diagram. Most code explanations need at least one. A plot can explain numerical behavior. A compact table may be better than another plot. Do not add decoration or a file-churn chart.
 
-For diagrams, use the svg-figs skill if it is available. Run its environment check, generate the SVG with its library, run the lint, and inspect the PNG. Otherwise use an available diagram generator; do not invent measurements. Keep a script beside its diagram under `.walkthrough/figs/` so it can be reproduced. The npm package does not depend on a machine-local skill installation.
+### Diagrams with figkit
+
+The package bundles figkit, a figure library with measured text, LaTeX math and a lint check. Commands see its location as `$WALKTHROUGH_FIGKIT`. Read `$WALKTHROUGH_FIGKIT/README.md` once, through a recorded command, before your first figure. Then, for each diagram:
+
+1. In one recorded command, write the script to `.walkthrough/figs/<name>.py` with a heredoc and run it with `"$WALKTHROUGH_FIGKIT/run.sh" .walkthrough/figs/<name>.py`. Pass `produces: ".walkthrough/figs/<name>.svg"`. The script begins `from svgfig import Figure` and calls `f = Figure()`, the report-column target: 800 px wide, with the height fitted to the content.
+2. The tool lints the captured SVG and returns its findings and a PNG preview. Fix every finding. Then look at the preview for what the lint cannot see: crossing or ambiguous arrows, uneven alignment, wasted space, text too long for its box. Record the script again until it is clean. A diagram with lint findings cannot be embedded.
+3. Lay out by hand. Measure with `f.size(rows)` and `f.width(s)`, give boxes in one column one width, align centers, and route arrows with `f.connector` so they do not cross. Label decision branches with `f.tag`. A good diagram has 3-10 boxes; split larger ones.
+4. Give each category color one meaning within a figure, such as `cat0` for a solver stage and `cat1` for a fallback. Use `emph` only for the one warning or result.
+
+Write box text as short labels: a few common words, with math in `$...$` (`$M_8 = 1$`, `$P_0$`). Show identifiers in the `code` style. Do not repeat the paragraph inside the figure.
+
+If `"$WALKTHROUGH_FIGKIT/scripts/check-env.sh"` fails (missing XeLaTeX, rsvg-convert, uv or fonts), report that under limits and use a pipe table or a list in place of the diagram. Do not hand-write SVG.
+
+### Plots
+
+Use matplotlib or the project's own plotting tools. Keep the script beside its figure under `.walkthrough/figs/`. Do not invent measurements.
 
 Record the command that writes each SVG or PNG and pass the path in `produces`. Only figures captured by a record can be embedded. Existing, recorded source data may be used for an explanatory visual, but label it as stored data; do not present it as a fresh experiment. In verification mode, favor a figure from the demonstrated run.
 

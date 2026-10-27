@@ -30,9 +30,17 @@ There are no links, images, raw HTML or attributes. Everything else is escaped. 
 
 Runtime-generated text (automatic limits, paths, metadata, recorded output) is never parsed as markup.
 
-## Linked diagrams
+## Diagrams
 
-An author can create a diagram with the svg-figs skill when that skill is available, run its lint, and inspect its PNG. The package does not require that machine-local library at runtime. Other diagram generators may also supply recorded SVG or PNG assets.
+The package bundles `figkit/`, a Python figure library adapted from the svg-figs skill. It has design tokens for the report column, text measured with HarfBuzz, LaTeX math typeset by XeLaTeX into glyph outlines, and a lint. Recorded commands receive its path in `WALKTHROUGH_FIGKIT`. `figkit/run.sh` runs a script through `uv` with `uharfbuzz`. The runtime needs uv, XeLaTeX with dvisvgm, rsvg-convert, and the STIX Two Text, IBM Plex Mono and New Computer Modern Math fonts; `figkit/scripts/check-env.sh` reports what is missing.
+
+When a recorded SVG carries figkit's `data-svgfig` marker, the record tool:
+
+1. runs the lint for palette, fonts, minimum size, canvas bounds, box padding, text overlap, contrast and wording, and stores the findings with the figure;
+2. converts the text to outlines with `rsvg-convert -f svg`, hashes that copy, and stores it beside the figure, so the page shows the measured layout without the fonts installed;
+3. returns a PNG preview as an image in the tool result, so the author can inspect the layout the lint cannot see.
+
+The write tool rejects a `diagram` visual whose figure has lint findings. It embeds the outlined copy after checking both hashes. Plots and other SVG or PNG files are embedded unchanged. Other generators may supply diagrams, but they are not linted.
 
 SVG assets are embedded as images, not active inline SVG. This prevents a diagram from injecting executable markup into the page. Optional `links` overlay accessible HTML anchors on the image. Coordinates are percentages of its full image bounds, including margins. Each link has a short label and a `target` of `section:<section-id>` or `record:<record-id>`. Section targets are `overview` or authored section IDs, not generated sections such as `checks` or `scope`. The renderer also supplies a text link list. Links scale with the image and remain usable by keyboard. The tool rejects unknown targets, non-finite coordinates, non-positive sizes, or regions extending beyond the image. No model-supplied executable or external URLs are accepted as diagram targets.
 
