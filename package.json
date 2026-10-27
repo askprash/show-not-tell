@@ -1,6 +1,6 @@
 {
   "name": "show-not-tell",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "Readable, source-linked code walkthroughs for Pi, with KaTeX math, tables and linted diagrams",
   "license": "MIT",
   "type": "module",
